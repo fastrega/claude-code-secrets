@@ -32,8 +32,21 @@ def _fill(template: str, mapping: dict[str, Any]) -> str:
     return out.replace("{{", "{").replace("}}", "}")
 
 
-def pick_pack(lock: dict, dossiers: dict[str, str]) -> str:
-    joined = "\n\n---\n\n".join(dossiers[g] for g in sorted(dossiers))
+def pick_pack(lock: dict, dossiers: dict[str, str], order_seed: str | None = None) -> str:
+    """
+    Render the shared pack.
+
+    `order_seed` shuffles the game order deterministically per model. Position in a
+    long document measurably affects how much attention a model gives an item, so a
+    fixed order would hand every model the same positional bias — and correlated
+    bias across the field is exactly what makes a consensus worthless. Seeding by
+    model name keeps each model's own pack reproducible.
+    """
+    gids = sorted(dossiers)
+    if order_seed:
+        import random
+        random.Random(order_seed).shuffle(gids)
+    joined = "\n\n---\n\n".join(dossiers[g] for g in gids)
     return _fill(_tpl("01_pick.md"), {
         "LOCK_SHA256": lock["lock"]["sha256"],
         "LOCKED_AT": lock["lock"]["locked_at_utc"],

@@ -45,19 +45,56 @@ Grading is stars-weighted and asymmetric: a 5-star loss costs more than three
 confidence in the right places beats one that goes 10-6 with it in the wrong
 places.
 
-# WHAT TO THINK ABOUT (privately)
+# METHOD — YOURS, NOT OURS
 
-Work through all of this before answering. Report only the conclusion.
+**Choose your own approach and declare it.** Nobody is telling you to run a Monte
+Carlo, build power ratings, do agentic web research, reason qualitatively from
+matchups, or blend several of those. You decide what the question deserves, and
+you may use a different method on different games.
 
-Opponent-adjusted efficiency and whether a record is propped up by a weak
-schedule · the variance ledger (EPA margin vs scoreboard margin, fumble-recovery
-luck, kicking luck) and who regresses which way · last week's obstacles —
-turnovers, missed field goals, penalties, weather, players held out · injuries by
-unit, not by headline · wind above 15 mph, dome team outdoors, surface change,
-altitude, travel and body-clock kickoff time · rest asymmetry and short weeks ·
-coaching head-to-head and scheme familiarity · emerging players, and whether an
-expanded role is durable or a one-week outlier · and above all, whether the edge
-you found is already the reason the line sits where it does.
+The one requirement is that you *say* what you did, in the `method` field, and
+why you chose it over the alternatives. That declaration is scored: over the
+season we compare methods against results, so a method that works will show up as
+having worked. This only functions if your declaration is honest — describe what
+you actually did, not what sounds most rigorous.
+
+Where the dossier is thin, say so in `data_gaps` rather than filling the hole
+from memory. A wrong recalled number is worse than an acknowledged unknown.
+
+## Independence
+
+You are answering alone. You have not been shown any other model's picks, and you
+will not be until after your card is submitted and locked.
+
+- Do not guess what the field thinks and position against it (or with it).
+  Contrarianism is not a method. Neither is consensus-chasing.
+- Do not weight a factor because it seems like the kind of thing this exercise
+  expects. The dossier sections are the data that was available, not a checklist
+  and not a ranking of what matters.
+- The dossier reports measurements and labels its gaps. Where it states a number,
+  trust it. Where it offers an interpretation, it is wrong to do so — treat any
+  interpretive phrasing as an artefact, not as guidance.
+- Game order in this pack is randomised per model and carries no signal.
+
+Your job is to report what *you* actually concluded. A card that honestly reflects
+one model's reasoning is worth more to this exercise than a card that has been
+smoothed toward what other models might say.
+
+# FACTORS AVAILABLE IN THE DOSSIER
+
+Listed so you know what is in the packet, not as an agenda. Use what your method
+needs and ignore the rest.
+
+Opponent-adjusted efficiency and the average opponent quality faced · the variance
+ledger (EPA margin vs scoreboard margin, fumble-recovery luck, kicking luck) ·
+last week's turnovers, missed field goals, penalties, conditions and explosive
+plays · injuries by unit · wind, roof, surface, altitude, travel and body-clock
+kickoff hour · rest days · snap-share movement and what the production behind it
+was made of.
+
+Not in the packet, and named in each dossier: PFF alignment and coverage grades,
+SIS charting, physician injury grades, and coaching head-to-head history. If your
+method needs those and you can research them, do; if you cannot, say so.
 
 # OUTPUT — JSON only, no prose outside it
 
@@ -70,6 +107,12 @@ No `analysis` field in Round 1. Do not add fields.
   "season": {SEASON},
   "week": {WEEK},
   "lock_sha256": "{LOCK_SHA256}",
+  "method": {{
+    "approach": "<what you actually did — e.g. simulation, power ratings, matchup reasoning, web research, a blend>",
+    "why_this_one": "<why it suits this slate better than the alternatives you considered, in one or two sentences>",
+    "varied_by_game": "<null, or which games you handled differently and why>"
+  }},
+  "data_gaps": ["<what you wanted and did not have>"],
   "picks": [
     {{
       "game_id": "2026_02_DET_BUF",

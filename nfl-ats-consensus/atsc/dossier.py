@@ -15,6 +15,27 @@ from .features.context import game_context, injury_report, unit_health
 from .features.players import breakout_candidates, personnel_losses, snap_trends
 
 
+def volatile_fingerprint(md: str) -> str:
+    """
+    Hash only the parts of a dossier that can change between Tuesday and kickoff:
+    the environment block (weather, conditions) and both injury reports.
+
+    Efficiency ratings and last-game forensics are fixed once the previous week is
+    over, so re-asking a model about a game whose volatile sections are unchanged
+    buys nothing and costs a full slate's worth of tokens.
+    """
+    import hashlib
+    import re
+
+    keep: list[str] = []
+    for header in ("## ENVIRONMENT & SITUATION", "### Injury report & unit health",
+                   "### Emerging / role changes"):
+        for block in re.findall(rf"^{re.escape(header)}\n(.*?)(?=\n#{{2,3}} |\Z)",
+                                md, re.MULTILINE | re.DOTALL):
+            keep.append(block.strip())
+    return hashlib.sha256("\n".join(keep).encode()).hexdigest()
+
+
 def last_game_forensics(pbp: pd.DataFrame, sched: pd.DataFrame, team: str) -> dict:
     """
     What actually happened the last time out, with the noise separated from the
@@ -56,14 +77,11 @@ def last_game_forensics(pbp: pd.DataFrame, sched: pd.DataFrame, team: str) -> di
 
     # A spread-sized gap between how the game was played and how it finished.
     luck = margin - epa_margin
-    if luck > 7:
-        verdict = (f"{team} finished {luck:.1f} points BETTER than they played. "
-                   f"The record flatters them; the market may not have caught up.")
-    elif luck < -7:
-        verdict = (f"{team} finished {abs(luck):.1f} points WORSE than they played. "
-                   f"Live buy-low candidate if the market is pricing the scoreboard.")
+    if abs(luck) > 7:
+        verdict = (f"{team} finished {abs(luck):.1f} points "
+                   f"{'above' if luck > 0 else 'below'} its EPA-implied margin.")
     else:
-        verdict = f"Scoreboard matched the play ({luck:+.1f}). Result is broadly honest."
+        verdict = f"Scoreboard within {abs(luck):.1f} points of the EPA-implied margin."
 
     return {
         "available": True,
@@ -99,7 +117,7 @@ def _conditions(g: pd.DataFrame, gm) -> str:
     w = f"{wind.iloc[0]:.0f} mph wind" if not wind.empty else "wind n/a"
     note = ""
     if not wind.empty and wind.iloc[0] >= 15:
-        note = "  <-- wind at or above the level that measurably suppresses passing and long FGs"
+        note = "  <-- at or above the level where passing and long-FG declines are measurable"
     return f"{t}, {w}{note}"
 
 
@@ -128,15 +146,16 @@ def _team_block(team: str, tt: pd.DataFrame) -> str:
         f"  Pass rate over expected (PROE) : {f('off_proe')}",
         f"  Sack rate taken / generated    : {f('off_sack_rate')} / {f('def_sack_rate')}",
         "",
-        f"  SCHEDULE CHECK — avg opponent defence faced: {f('opp_def_faced')}, "
-        f"offence faced: {f('opp_off_faced')}",
-        f"      (a strong rating against weak opponents is the 'fake good' pattern; "
-        f"the adjusted numbers above already net this out)",
+        f"  Avg opponent defence faced     : {f('opp_def_faced')}",
+        f"  Avg opponent offence faced     : {f('opp_off_faced')}",
+        f"      (the adjusted figures above already net out opponent quality; "
+        f"these two are shown so you can judge how much adjustment was applied)",
         "",
         f"  VARIANCE LEDGER",
         f"    EPA-implied margin/game : {f('epa_margin_per_game', 1)}",
         f"    Actual margin/game      : {f('actual_margin_per_game', 1)}",
-        f"    Luck gap                : {f('luck_margin', 1)}   {r.get('regression_flag') or ''}",
+        f"    Gap (actual − implied)  : {f('luck_margin', 1)}  "
+        f"(z={f('luck_margin_z', 2)})   {r.get('luck_note') or ''}",
         f"    Fumble-recovery luck    : {f('fumble_luck_pts', 1, ' pts')}",
         f"    Kicking luck            : {f('fg_luck_pts', 1, ' pts')} over {int(r.get('fg_attempts') or 0)} attempts",
         f"    Penalty yards/game      : {f('penalty_yds_per_game', 1)}",
@@ -259,12 +278,13 @@ def build(game: dict, lock_game: dict, tt: pd.DataFrame, pbp: pd.DataFrame,
                 A(f"- **{b['player']}** ({b['pos']}, {b['unit']}) — {base}"
                   + (f", {b['snap_pct_delta']:+.1f} pts" if b.get("snap_pct_delta") else ""))
                 A(f"  - usage: {b.get('usage')}")
-                A(f"  - repeatability: {b.get('repeatability')}")
+                A(f"  - usage shape: {b.get('usage_shape')}")
         A("")
 
-    A("## MATCHUP NOTES TO RESOLVE")
-    A("These are the questions the numbers above cannot answer on their own. "
-      "Address each explicitly in your pick rationale:")
+    A("## OPEN QUESTIONS THIS PACKET DOES NOT ANSWER")
+    A("Listed because the data above is silent on them, not because they are the "
+      "questions that decide this game. Use, ignore, or replace them as your own "
+      "method requires:")
     A("")
     A(f"1. Does {away}'s pass offence attack the specific area where {home}'s coverage "
       f"is weakest (outside CB vs slot vs seam), or does the matchup cancel their strength?")
@@ -275,7 +295,7 @@ def build(game: dict, lock_game: dict, tt: pd.DataFrame, pbp: pd.DataFrame,
       f"pressure without blitzing).")
     A(f"4. Pace and pass-rate-over-expected: does the projected game script let the "
       f"underdog stay in it, or does an early lead turn this into a clock-killing rout?")
-    A(f"5. Is any edge identified above already the reason the line sits where it does?")
+    A(f"5. How much of anything above is already reflected in the locked number?")
     A("")
 
     A("## DATA PROVENANCE")

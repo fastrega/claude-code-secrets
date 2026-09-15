@@ -1,25 +1,41 @@
-name: ATS weekly pipeline
+name: ATS pipeline
 
-# Three runs a week, matching how information actually arrives.
-# Cron is UTC. Adjust if you are not on US Eastern.
+# Cron is UTC and GitHub does not observe DST. These times are correct for EDT
+# (UTC-4), which covers the season through early November. After the clocks go
+# back, add one hour to every cron below or the late-window runs will fire early.
+#
+# The cadence tracks when NFL information actually lands:
+#   Wed evening  first real injury designations
+#   Fri          final game designations (Out / Doubtful / Questionable)
+#   T-90 min     official inactives — the last hard information before kickoff
 on:
   schedule:
-    - cron: "0 15 * * 2"   # Tuesday 11:00 ET — CBS line is up; lock and build
-    - cron: "0 13 * * 4"   # Thursday 09:00 ET — Wednesday practice reports in
-    - cron: "0 13 * * 0"   # Sunday   09:00 ET — final designations and weather
+    - cron: "0 15 * * 2"    # Tue 11:00 ET  — grade last week, build full slate
+    - cron: "0 20 * * 4"    # Thu 16:00 ET  — TNF, ~4h out
+    - cron: "0 16 * * 6"    # Sat 12:00 ET  — full slate, Friday designations in
+    - cron: "30 14 * * 0"   # Sun 10:30 ET  — early window, ~2.5h out
+    - cron: "0 18 * * 0"    # Sun 14:00 ET  — late window, ~2h out
+    - cron: "45 21 * * 0"   # Sun 17:45 ET  — SNF, ~2.5h out
+    - cron: "0 20 * * 1"    # Mon 16:00 ET  — MNF, ~4h out
   workflow_dispatch:
     inputs:
       season:
-        description: Season
-        required: true
-        default: "2026"
+        description: Season (blank = auto-detect)
+        required: false
       week:
-        description: Week
-        required: true
+        description: Week (blank = auto-detect)
+        required: false
+      window:
+        description: all | thu | sun_early | sun_late | snf | mnf
+        required: false
+        default: all
       stage:
-        description: build | battle | adjudicate | grade
-        required: true
+        description: build | poll | battle | grade
+        required: false
         default: build
+
+permissions:
+  contents: write
 
 jobs:
   run:
@@ -37,74 +53,129 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # nflverse release assets are rebuilt nightly in season; caching them keeps
-      # the Thursday and Sunday runs to a few seconds.
+      # nflverse release assets are rebuilt nightly in season. Caching keeps the
+      # refresh runs to seconds rather than re-downloading ~70MB each time.
       - uses: actions/cache@v4
         with:
           path: ~/.cache/atsc
           key: nflverse-${{ github.run_id }}
           restore-keys: nflverse-
 
-      - name: Resolve season and week
-        id: sw
+      - name: Resolve season, week and window
+        id: ctx
+        env:
+          IN_SEASON: ${{ inputs.season }}
+          IN_WEEK: ${{ inputs.week }}
+          IN_WINDOW: ${{ inputs.window }}
+          CRON: ${{ github.event.schedule }}
         run: |
-          if [ -n "${{ inputs.season }}" ]; then
-            echo "season=${{ inputs.season }}" >> "$GITHUB_OUTPUT"
-            echo "week=${{ inputs.week }}" >> "$GITHUB_OUTPUT"
-          else
-            python - <<'PY' >> "$GITHUB_OUTPUT"
-          import datetime as dt, pandas as pd, sys
+          python - >> "$GITHUB_OUTPUT" <<'PY'
+          import os, sys, datetime as dt
+          import pandas as pd
           sys.path.insert(0, ".")
           from atsc.sources import nflverse
-          s = nflverse.schedules()
-          today = pd.Timestamp(dt.date.today())
-          up = s[(pd.to_datetime(s.gameday) >= today) & (s.result.isna())]
-          row = up.sort_values("gameday").iloc[0]
-          print(f"season={int(row.season)}")
-          print(f"week={int(row.week)}")
-          PY
-          fi
 
-      # The line lock is committed to the repo and must already exist. This job
-      # never creates or modifies it — freezing the line is a deliberate human act.
-      - name: Verify the locked line
+          # Each cron maps to the kickoff window it is meant to refresh.
+          by_cron = {
+              "0 15 * * 2":  ("all",       "tuesday"),
+              "0 20 * * 4":  ("thu",       "refresh"),
+              "0 16 * * 6":  ("all",       "refresh"),
+              "30 14 * * 0": ("sun_early", "refresh"),
+              "0 18 * * 0":  ("sun_late",  "refresh"),
+              "45 21 * * 0": ("snf",       "refresh"),
+              "0 20 * * 1":  ("mnf",       "refresh"),
+          }
+          window, kind = by_cron.get(os.environ.get("CRON", ""), ("all", "manual"))
+          window = os.environ.get("IN_WINDOW") or window
+
+          season = os.environ.get("IN_SEASON")
+          week = os.environ.get("IN_WEEK")
+          if not season or not week:
+              s = nflverse.schedules()
+              up = s[s.result.isna() & (pd.to_datetime(s.gameday)
+                    >= pd.Timestamp(dt.date.today()))]
+              row = up.sort_values("gameday").iloc[0]
+              season, week = int(row.season), int(row.week)
+
+          print(f"season={season}")
+          print(f"week={week}")
+          print(f"window={window}")
+          print(f"kind={kind}")
+          PY
+
+      # The lock is a deliberate human act. This job verifies it and never writes it.
+      - name: Verify the locked CBS line
         run: |
           python -m atsc.cli verify \
-            --season ${{ steps.sw.outputs.season }} \
-            --week ${{ steps.sw.outputs.week }}
+            --season ${{ steps.ctx.outputs.season }} \
+            --week ${{ steps.ctx.outputs.week }}
 
+      # Tuesday only: grade the week that just finished, before touching this one.
+      - name: Grade previous week
+        if: steps.ctx.outputs.kind == 'tuesday'
+        continue-on-error: true
+        run: |
+          PREV=$(( ${{ steps.ctx.outputs.week }} - 1 ))
+          if [ "$PREV" -ge 1 ]; then
+            python -m atsc.cli grade --season ${{ steps.ctx.outputs.season }} --week "$PREV"
+            python -m atsc.cli report --season ${{ steps.ctx.outputs.season }} --week "$PREV"
+          fi
+
+      # Tuesday builds the whole slate. Every later run rebuilds only its window,
+      # and --changed-only means a pack is written solely when injuries, weather or
+      # snap roles actually moved.
       - name: Build dossiers
-        if: inputs.stage == 'build' || inputs.stage == ''
         run: |
+          EXTRA=""
+          if [ "${{ steps.ctx.outputs.kind }}" = "refresh" ]; then
+            EXTRA="--changed-only"
+          fi
           python -m atsc.cli build \
-            --season ${{ steps.sw.outputs.season }} \
-            --week ${{ steps.sw.outputs.week }}
+            --season ${{ steps.ctx.outputs.season }} \
+            --week ${{ steps.ctx.outputs.week }} \
+            --window ${{ steps.ctx.outputs.window }} $EXTRA
 
-      - name: Battle and adjudicate
-        if: inputs.stage == 'battle' || inputs.stage == 'adjudicate'
+      - name: Poll the field
+        if: env.OPENROUTER_API_KEY != ''
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          python -m atsc.cli battle \
-            --season ${{ steps.sw.outputs.season }} --week ${{ steps.sw.outputs.week }}
-          python -m atsc.cli adjudicate \
-            --season ${{ steps.sw.outputs.season }} --week ${{ steps.sw.outputs.week }}
+          W="${{ steps.ctx.outputs.window }}"
+          if [ "${{ steps.ctx.outputs.kind }}" = "tuesday" ]; then
+            PACK="PROMPT_PACK.md"
+          elif [ "$W" = "all" ]; then
+            PACK="PROMPT_PACK_changed.md"
+          else
+            PACK="PROMPT_PACK_${W}-changed.md"
+          fi
+          # No pack means nothing moved since the last run — that is a success.
+          if [ ! -f "data/dossiers/${{ steps.ctx.outputs.season }}/week$(printf %02d ${{ steps.ctx.outputs.week }})/$PACK" ]; then
+            echo "No pack written — inputs unchanged since the last run. Nothing to re-ask."
+            exit 0
+          fi
+          python -m atsc.cli poll \
+            --season ${{ steps.ctx.outputs.season }} \
+            --week ${{ steps.ctx.outputs.week }} --pack "$PACK"
 
-      - name: Grade
-        if: inputs.stage == 'grade'
+      - name: Battle, adjudicate, report
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        continue-on-error: true
         run: |
-          python -m atsc.cli grade \
-            --season ${{ steps.sw.outputs.season }} --week ${{ steps.sw.outputs.week }}
+          S=${{ steps.ctx.outputs.season }}; W=${{ steps.ctx.outputs.week }}
+          python -m atsc.cli battle --season $S --week $W
+          if [ -n "$OPENROUTER_API_KEY" ]; then
+            python -m atsc.cli poll-rebuttals --season $S --week $W
+          fi
+          python -m atsc.cli adjudicate --season $S --week $W
+          python -m atsc.cli report --season $S --week $W
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: atsc-${{ steps.sw.outputs.season }}-wk${{ steps.sw.outputs.week }}
-          path: nfl-ats-consensus/data/
-
-      # Commit the generated dossiers and results so the audit trail lives in git.
-      - name: Commit outputs
+      - name: Commit the audit trail
         run: |
           git config user.name "atsc-bot"
           git config user.email "atsc-bot@users.noreply.github.com"
-          git add data/
+          git add -A cards data
           git diff --staged --quiet || git commit -m \
-            "atsc: ${{ steps.sw.outputs.season }} week ${{ steps.sw.outputs.week }} refresh"
-          git push || true
+            "atsc: ${{ steps.ctx.outputs.season }} wk${{ steps.ctx.outputs.week }} ${{ steps.ctx.outputs.window }} refresh"
+          git pull --rebase --autostash origin ${{ github.ref_name }} || true
+          git push

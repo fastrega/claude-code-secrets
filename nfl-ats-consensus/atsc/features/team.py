@@ -204,9 +204,15 @@ def variance_ledger(pbp: pd.DataFrame, sched: pd.DataFrame) -> pd.DataFrame:
     else:
         agg["penalty_yds_per_game"] = 0.0
 
-    agg["regression_flag"] = np.where(
-        agg["luck_margin"] > 7, "FADE — winning by more than they played",
-        np.where(agg["luck_margin"] < -7, "BUY — losing by more than they played", ""),
+    # Stated as measurement, not advice. Whether a luck gap is a fade, a buy, or
+    # already priced in is the analyst's call — the dossier's job is to report the
+    # size of the gap and how unusual it is, then get out of the way.
+    sd = agg["luck_margin"].std(ddof=0) or 1.0
+    agg["luck_margin_z"] = (agg["luck_margin"] / sd).round(2)
+    agg["luck_note"] = np.where(
+        agg["luck_margin"].abs() > 7,
+        "scoreboard and play diverged by more than a touchdown",
+        "",
     )
     return agg.reset_index()
 

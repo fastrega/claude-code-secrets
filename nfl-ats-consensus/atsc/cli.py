@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import battle, grade, linelock, prompt
+from . import battle, grade, linelock, prompt, report
 from .dossier import build as build_dossier
 from .sources import nflverse
 
@@ -161,6 +161,35 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- build
 
+# Kickoff windows, so a refresh close to a game only touches the games about to
+# start. Times are the venue-local kickoff hour recorded in the schedule.
+WINDOWS = {
+    "thu": lambda r: str(r["weekday"]).startswith("Thu"),
+    "sun_early": lambda r: str(r["weekday"]) == "Sunday" and _hour(r) < 16,
+    "sun_late": lambda r: str(r["weekday"]) == "Sunday" and 16 <= _hour(r) < 19,
+    "snf": lambda r: str(r["weekday"]) == "Sunday" and _hour(r) >= 19,
+    "mnf": lambda r: str(r["weekday"]).startswith("Mon"),
+    "all": lambda r: True,
+}
+
+
+def _hour(row) -> int:
+    try:
+        return int(str(row["gametime"]).split(":")[0])
+    except Exception:
+        return 13
+
+
+def _select_games(sched: pd.DataFrame, window: str | None,
+                  games: list[str] | None) -> set[str] | None:
+    """None means the whole slate."""
+    if games:
+        return set(games)
+    if window and window != "all":
+        pred = WINDOWS[window]
+        return {r["game_id"] for _, r in sched.iterrows() if pred(r)}
+    return None
+
 def cmd_build(args: argparse.Namespace) -> int:
     season, week = args.season, args.week
     paths = _paths(season, week)
@@ -189,31 +218,238 @@ def cmd_build(args: argparse.Namespace) -> int:
           f"blending with {season - 1} prior")
     tt = team_table(pbp_cur, pbp_prior, sched, games_played)
 
-    week_sched = nflverse.week_games(season, week).set_index("game_id")
+    week_sched_df = nflverse.week_games(season, week)
+    week_sched = week_sched_df.set_index("game_id")
     lock_games = {g["game_id"]: g for g in lock["games"]}
 
+    selected = _select_games(week_sched_df, args.window, args.games)
+    if selected is not None:
+        print(f"  scoped to {len(selected)} game(s): {', '.join(sorted(selected))}")
+
+    from .dossier import volatile_fingerprint
+    snap_path = paths["dossiers"] / ".snapshot.json"
+    previous = json.loads(snap_path.read_text()) if snap_path.exists() else {}
+    snapshot: dict[str, str] = dict(previous)
+
     dossiers: dict[str, str] = {}
+    changed: list[str] = []
+    unchanged: list[str] = []
+
     for gid, lg in lock_games.items():
         if gid not in week_sched.index:
             print(f"  ! {gid} not on the schedule, skipping")
+            continue
+        if selected is not None and gid not in selected:
             continue
         row = week_sched.loc[gid].to_dict()
         row["game_id"] = gid
         md = build_dossier(row, lg, tt, pbp_cur, sched, inj, snaps, stats, depth,
                            week, prior_snaps=prior_snaps, with_weather=not args.no_weather)
+
+        fp = volatile_fingerprint(md)
+        if gid in previous and previous[gid] == fp:
+            unchanged.append(gid)
+        elif gid in previous:
+            changed.append(gid)
+        snapshot[gid] = fp
+
         dossiers[gid] = md
         (paths["dossiers"] / f"{gid}.md").write_text(md)
-        print(f"  dossier {gid}")
 
+    snap_path.write_text(json.dumps(snapshot, indent=2))
+
+    if previous:
+        print(f"\n  Since the last build: {len(changed)} game(s) materially changed, "
+              f"{len(unchanged)} unchanged")
+        for gid in changed:
+            print(f"    CHANGED    {gid}  (injuries, weather or snap roles moved)")
+        if args.changed_only and changed:
+            dossiers = {g: dossiers[g] for g in changed}
+            print(f"  --changed-only: pack limited to the {len(changed)} changed game(s)")
+        elif args.changed_only and not changed:
+            print("  --changed-only: nothing moved, no pack written. "
+                  "Re-asking would spend tokens on identical inputs.")
+            return 0
+
+    tag = args.window if args.window and args.window != "all" else None
+    if args.changed_only:
+        tag = f"{tag}-changed" if tag else "changed"
+    name = f"PROMPT_PACK{'_' + tag if tag else ''}.md"
     pack = prompt.pick_pack(lock, dossiers)
-    out = paths["dossiers"] / "PROMPT_PACK.md"
+    out = paths["dossiers"] / name
     out.write_text(pack)
 
-    print(f"\nWrote {len(dossiers)} dossiers to {paths['dossiers']}")
+    print(f"\nWrote {len(dossiers)} dossier(s) to {paths['dossiers']}")
     print(f"Prompt pack: {out}  ({len(pack):,} chars, ~{len(pack)//4:,} tokens)")
-    print(f"Line digest: {lock['lock']['sha256']}")
-    print("\nPaste PROMPT_PACK.md into each model. Save each reply as "
-          f"{paths['picks']}/<model-name>.json")
+    print(f"Line digest: {lock['lock']['sha256']}  (unchanged — the line never moves)")
+    print(f"\n  python -m atsc.cli poll --season {season} --week {week} --pack {name}")
+    return 0
+
+
+# ---------------------------------------------------------------- poll
+
+def cmd_models(args: argparse.Namespace) -> int:
+    from .adapters import openrouter
+
+    if args.roster:
+        for m in openrouter.load_roster(include_disabled=True):
+            flag = " " if m.get("enabled", True) else "×"
+            print(f" {flag} {m['name']:<10} {m.get('lane'):<12} "
+                  f"{m.get('slug') or '(manual lane)'}")
+        print("\nEdit config/models.json to change the field. "
+              "× means benched (enabled: false).")
+        return 0
+
+    rows = openrouter.list_models(args.search)
+    print(f"{len(rows)} model(s) reachable with your key"
+          + (f" matching {args.search!r}" if args.search else "") + ":\n")
+    for m in rows[:args.limit]:
+        pricing = m.get("pricing", {})
+        print(f"  {m.get('id'):<48} in ${pricing.get('prompt', '?')}/tok  "
+              f"out ${pricing.get('completion', '?')}/tok")
+    if len(rows) > args.limit:
+        print(f"\n  … {len(rows) - args.limit} more. Narrow with --search.")
+    return 0
+
+
+def cmd_poll(args: argparse.Namespace) -> int:
+    """Round 1: send the shared prompt pack to the whole field."""
+    from .adapters import openrouter
+
+    season, week = args.season, args.week
+    paths = _paths(season, week)
+    lock = _load_lock(season, week)
+
+    pack_path = paths["dossiers"] / args.pack
+    if not pack_path.exists():
+        print(f"No prompt pack at {pack_path} — run `atsc build` first.")
+        available = sorted(p.name for p in paths["dossiers"].glob("PROMPT_PACK*.md"))
+        if available:
+            print("Available packs: " + ", ".join(available))
+        return 1
+    pack = pack_path.read_text()
+
+    # A refresh poll must not overwrite the Tuesday card — keep both, so the
+    # post-mortem can ask whether the late news actually improved the pick.
+    suffix = args.suffix or ("" if args.pack == "PROMPT_PACK.md"
+                             else "." + args.pack.replace("PROMPT_PACK_", "")
+                             .replace("PROMPT_PACK", "").removesuffix(".md").strip("._"))
+
+    models = openrouter.load_roster(args.only)
+    if not models:
+        print("No models enabled. Check config/models.json.")
+        return 1
+
+    print(f"Polling {len(models)} model(s) on {season} week {week} "
+          f"[{args.pack}{' → ' + suffix if suffix else ''}]")
+    print(f"  pack {len(pack):,} chars (~{len(pack)//4:,} tokens), "
+          f"digest {lock['lock']['sha256'][:16]}…")
+
+    # Recompose the pack per model so each gets its own game ordering. Same
+    # dossiers, same line, same instructions — only the sequence differs, which
+    # keeps positional bias from landing identically on every model.
+    gids = [p.stem for p in sorted(paths["dossiers"].glob("*.md"))
+            if not p.stem.startswith("PROMPT_PACK")]
+    packed = {g: (paths["dossiers"] / f"{g}.md").read_text() for g in gids
+              if g in {x["game_id"] for x in lock["games"]}}
+
+    if args.same_order or not packed:
+        prompt_for = pack
+        print("  game order: identical for every model\n")
+    else:
+        # Only the games actually in the requested pack.
+        in_pack = {g for g in packed if f"# {g.split('_')[2]} @ {g.split('_')[3]}" in pack}
+        subset = {g: packed[g] for g in (in_pack or packed)}
+
+        def prompt_for(m: dict, _subset=subset) -> str:
+            return prompt.pick_pack(lock, _subset, order_seed=m["name"])
+
+        print(f"  game order: randomised per model over {len(subset)} game(s)\n")
+
+    res = openrouter.fan_out(models, prompt_for, paths["picks"],
+                             max_workers=args.workers, suffix=suffix)
+
+    print(f"\n{len(res['ok'])} ok, {len(res['failed'])} failed, "
+          f"{len(res['manual'])} manual")
+    if res["failed"]:
+        print("Failed models can be retried with --only, or pasted in by hand.")
+    return 0 if res["ok"] else 1
+
+
+def cmd_poll_rebuttals(args: argparse.Namespace) -> int:
+    """Round 2: each model defends its position on the contested games only."""
+    from .adapters import openrouter
+
+    season, week = args.season, args.week
+    paths = _paths(season, week)
+    lock = _load_lock(season, week)
+
+    packs = sorted(paths["rebuttals"].glob("*.md"))
+    packs = [p for p in packs if p.name != "MANUAL_LANE.md"]
+    if not packs:
+        print(f"No rebuttal packs in {paths['rebuttals']} — run `atsc battle` first.")
+        return 1
+
+    roster = {m["name"]: m for m in openrouter.load_roster(args.only)}
+    todo = []
+    for p in packs:
+        gid, model = p.stem.split("__", 1)
+        if model in roster and roster[model].get("lane") == "openrouter":
+            todo.append((p, gid, roster[model]))
+
+    print(f"Round 2: {len(todo)} rebuttal(s) across "
+          f"{len({g for _, g, _ in todo})} contested game(s)\n")
+
+    ok = failed = 0
+    for path, gid, model in todo:
+        out = paths["rebuttals"] / f"{gid}__{model['name']}.reply.json"
+        if out.exists() and not args.force:
+            print(f"  skip    {model['name']:<10} {gid} (already answered)")
+            continue
+        try:
+            parsed, meta = openrouter.ask(model, path.read_text(), max_tokens=8000)
+            parsed.setdefault("game_id", gid)
+            out.write_text(json.dumps(parsed, indent=2) + "\n")
+            print(f"  ok      {model['name']:<10} {gid}  {parsed.get('decision', '?'):<18} "
+                  f"{meta['seconds']:.1f}s")
+            ok += 1
+        except Exception as e:
+            print(f"  FAILED  {model['name']:<10} {gid}  {type(e).__name__}: {e}")
+            failed += 1
+
+    print(f"\n{ok} answered, {failed} failed")
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Render the weekly card into the repo as markdown."""
+    season, week = args.season, args.week
+    paths = _paths(season, week)
+    lock = _load_lock(season, week)
+
+    subs = battle.load_submissions(paths["picks"])
+    if not subs:
+        print(f"No submissions in {paths['picks']}")
+        return 1
+    violations, _ = battle.audit_lines(lock, subs)
+    dis = battle.find_disagreements(lock, subs, violations)
+    house = report.load_house(paths["results"] / "house.json")
+
+    card = report.weekly_card(lock, subs, dis, house, violations)
+    out = ROOT / "cards" / f"{season}-week{week:02d}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(card)
+    print(f"Wrote {out}")
+
+    graded = sorted(paths["results"].glob("graded__*.json"))
+    if graded:
+        reports = [json.loads(p.read_text()) for p in graded]
+        rc = report.results_card(lock, reports, grade.leaderboard(reports))
+        rout = ROOT / "cards" / f"{season}-week{week:02d}-results.md"
+        rout.write_text(rc)
+        print(f"Wrote {rout}")
+    else:
+        print("No graded reports yet — run `atsc grade` after the games for the results card.")
     return 0
 
 
@@ -347,10 +583,44 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("build", help="build dossiers and the shared prompt pack")
     common(p)
+    p.add_argument("--window", choices=sorted(WINDOWS),
+                   help="scope to one kickoff window: thu, sun_early, sun_late, snf, mnf")
+    p.add_argument("--games", nargs="+", metavar="GAME_ID", help="scope to specific games")
+    p.add_argument("--changed-only", action="store_true",
+                   help="pack only games whose injuries, weather or snap roles moved "
+                        "since the last build")
     p.add_argument("--no-weather", action="store_true")
     p.add_argument("--allow-unverified", action="store_true",
                    help="dry run against placeholder lines — never distribute the output")
     p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("models", help="list the roster, or what your OpenRouter key can reach")
+    p.add_argument("--roster", action="store_true", help="show config/models.json instead of querying")
+    p.add_argument("--search", help="filter live model slugs, e.g. 'claude'")
+    p.add_argument("--limit", type=int, default=60)
+    p.set_defaults(func=cmd_models)
+
+    p = sub.add_parser("poll", help="Round 1 — send the prompt pack to the whole field")
+    common(p)
+    p.add_argument("--only", nargs="+", metavar="MODEL", help="poll only these roster names")
+    p.add_argument("--pack", default="PROMPT_PACK.md",
+                   help="which pack to send (a windowed build writes its own)")
+    p.add_argument("--suffix", help="tag the output files, e.g. '.sunday' for a refresh poll")
+    p.add_argument("--same-order", action="store_true",
+                   help="send every model an identical game order (default: randomised "
+                        "per model so positional bias does not correlate across the field)")
+    p.add_argument("--workers", type=int, default=4)
+    p.set_defaults(func=cmd_poll)
+
+    p = sub.add_parser("poll-rebuttals", help="Round 2 — models defend on contested games")
+    common(p)
+    p.add_argument("--only", nargs="+", metavar="MODEL")
+    p.add_argument("--force", action="store_true", help="re-ask models that already answered")
+    p.set_defaults(func=cmd_poll_rebuttals)
+
+    p = sub.add_parser("report", help="render the weekly card to cards/ as markdown")
+    common(p)
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("battle", help="audit lines, find disagreements, write rebuttal packs")
     common(p)

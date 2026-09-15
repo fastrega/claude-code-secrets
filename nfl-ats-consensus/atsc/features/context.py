@@ -23,14 +23,15 @@ TEAMS: dict[str, Any] = json.loads(CONFIG.read_text())
 TZ_OFFSET = {"America/New_York": 0, "America/Chicago": -1, "America/Denver": -2,
              "America/Phoenix": -2, "America/Los_Angeles": -3}
 
-# Wind is the only weather variable with a large, well-replicated effect on
-# passing and kicking. Cold alone is mostly a bettor's superstition.
+# Wind is the weather variable with the largest well-replicated effect on passing
+# and kicking. Temperature on its own has a much smaller measured effect. Bands
+# below describe what has been measured, not what to do about it.
 WIND_BANDS = [
-    (0, 8, "negligible", "No meaningful effect. Do not adjust."),
-    (8, 12, "mild", "Slight drag on deep balls; kickers unaffected inside 45."),
-    (12, 15, "notable", "Deep passing efficiency starts to dip; 50+ FGs get shaky."),
-    (15, 20, "significant", "Measurable hit to passing EPA and deep-shot accuracy; totals shade down."),
-    (20, 99, "severe", "Passing games break down, FGs beyond 45 become coin flips, run rates spike."),
+    (0, 8, "negligible", "No measurable effect on passing or kicking in the data."),
+    (8, 12, "mild", "Small measured drag on deep attempts; FG accuracy inside 45 unchanged."),
+    (12, 15, "notable", "Deep passing efficiency measurably declines; 50+ FG accuracy declines."),
+    (15, 20, "significant", "Passing EPA and deep accuracy decline measurably; observed pass rates fall."),
+    (20, 99, "severe", "Large measured declines in passing efficiency and FG accuracy beyond 45."),
 ]
 
 
@@ -89,8 +90,8 @@ def game_context(game: dict[str, Any], *, with_weather: bool = True) -> dict[str
         "indoor": indoor,
         "surface": game.get("surface") or hm["surface"],
         "altitude_ft": hm["alt_ft"],
-        "altitude_note": ("Denver: ~17% thinner air. Visiting conditioning and kicking "
-                          "distance both move; deep balls carry." if hm["alt_ft"] > 4000 else ""),
+        "altitude_note": ("~17% lower air density than sea level; measurably affects "
+                          "kick distance and ball carry." if hm["alt_ft"] > 4000 else ""),
         "travel_miles": round(haversine_miles(am["lat"], am["lon"], hm["lat"], hm["lon"])),
         "tz_shift_hours": TZ_OFFSET.get(hm["tz"], 0) - TZ_OFFSET.get(am["tz"], 0),
         "home_rest_days": game.get("home_rest"),
@@ -98,8 +99,8 @@ def game_context(game: dict[str, Any], *, with_weather: bool = True) -> dict[str
         "kickoff_local": f"{game.get('gameday')} {game.get('gametime')} ({game.get('weekday')})",
     }
 
-    # Body clock: a West Coast team playing a 1pm Eastern kickoff is starting at
-    # 10am body time; the effect is real and asymmetric.
+    # Body clock: a West Coast team playing a 1pm Eastern kickoff starts at 10am
+    # body time. Reported as the hour; the size of the effect is the analyst's call.
     shift = ctx["tz_shift_hours"]
     try:
         kick_hour = int(str(game.get("gametime", "13:00")).split(":")[0])
@@ -108,9 +109,10 @@ def game_context(game: dict[str, Any], *, with_weather: bool = True) -> dict[str
     ctx["away_body_clock_hour"] = kick_hour - shift
     if shift >= 2 and kick_hour <= 13:
         ctx["body_clock_note"] = (f"{away} travels {shift}h east for a {kick_hour}:00 kick — "
-                                  f"{ctx['away_body_clock_hour']}:00 body time. Historically a real drag.")
+                                  f"{ctx['away_body_clock_hour']}:00 body time.")
     elif shift <= -2 and kick_hour >= 20:
-        ctx["body_clock_note"] = f"{away} travels {abs(shift)}h west for a night game — mild edge, late body clock."
+        ctx["body_clock_note"] = (f"{away} travels {abs(shift)}h west for a night game — "
+                                  f"{ctx['away_body_clock_hour']}:00 body time.")
     else:
         ctx["body_clock_note"] = ""
 
@@ -133,8 +135,7 @@ def game_context(game: dict[str, Any], *, with_weather: bool = True) -> dict[str
     ctx["roof_change"] = (am["roof"] in {"dome", "closed"}) and not indoor
     ctx["surface_change"] = (am["surface"] == "grass") != (str(ctx["surface"]) == "grass")
     if ctx["roof_change"]:
-        ctx["roof_change_note"] = (f"{away} is a dome team playing outdoors. Check their outdoor "
-                                   f"splits before trusting their offensive rating.")
+        ctx["roof_change_note"] = f"{away} plays home games indoors; this game is outdoors."
     else:
         ctx["roof_change_note"] = ""
 

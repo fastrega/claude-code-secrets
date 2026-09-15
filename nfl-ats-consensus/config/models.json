@@ -1,0 +1,81 @@
+{
+  "_comment": [
+    "The weekly field. `slug` values are OpenRouter model identifiers and they",
+    "change as providers ship new versions — run `python -m atsc.cli models --search claude`",
+    "to list what your key can actually reach, then paste the slug you want here.",
+    "",
+    "`reasoning` maps to OpenRouter's reasoning control. 'high' buys deep thinking",
+    "for Round 2 defence; Round 1 is deliberately terse output regardless.",
+    "",
+    "`lane`: 'openrouter' is polled automatically. 'manual' means you paste the",
+    "prompt yourself and save the reply — used for products with no general API.",
+    "",
+    "Set `enabled` false to bench a model without deleting its config."
+  ],
+  "models": [
+    {
+      "name": "claude",
+      "lane": "openrouter",
+      "slug": "anthropic/claude-opus-4.1",
+      "reasoning": "high",
+      "enabled": true
+    },
+    {
+      "name": "chatgpt",
+      "lane": "openrouter",
+      "slug": "openai/gpt-5",
+      "reasoning": "high",
+      "enabled": true
+    },
+    {
+      "name": "gemini",
+      "lane": "openrouter",
+      "slug": "google/gemini-2.5-pro",
+      "reasoning": "high",
+      "enabled": true
+    },
+    {
+      "name": "grok",
+      "lane": "openrouter",
+      "slug": "x-ai/grok-4",
+      "reasoning": "high",
+      "enabled": true
+    },
+    {
+      "name": "deepseek",
+      "lane": "openrouter",
+      "slug": "deepseek/deepseek-r1",
+      "reasoning": "high",
+      "enabled": true
+    },
+    {
+      "name": "qwen",
+      "lane": "openrouter",
+      "slug": "qwen/qwen3-235b-a22b",
+      "reasoning": "high",
+      "enabled": true
+    },
+    {
+      "name": "kimi",
+      "lane": "openrouter",
+      "slug": "moonshotai/kimi-k2",
+      "reasoning": "high",
+      "enabled": false
+    },
+    {
+      "name": "glm",
+      "lane": "openrouter",
+      "slug": "z-ai/glm-4.6",
+      "reasoning": "high",
+      "enabled": false
+    },
+    {
+      "name": "manus",
+      "lane": "manual",
+      "slug": null,
+      "reasoning": "agentic research mode",
+      "enabled": true,
+      "note": "No general API. `atsc poll` writes a paste-ready file and waits for the reply."
+    }
+  ]
+}

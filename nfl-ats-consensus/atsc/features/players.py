@@ -1,19 +1,16 @@
 """
-Emerging players: who is suddenly on the field more, who is producing on those
-snaps, and — the part that actually matters for a spread — whether it is a
-one-week outlier or a role change that holds all season.
+Emerging players: who is suddenly on the field more, and what the production on
+those snaps was made of.
 
 The separation test has three legs:
 
-ROLE      Did the snap share jump, and was the jump caused by something durable
-          (a starter on IR, a scheme change) or by garbage time / one blowout?
-VOLUME    Are the touches/targets following the snaps? Snap share without usage
-          is a decoy.
-EFFICIENCY Is the per-touch production inside a range that can repeat, or is it
-          one 70-yard screen carrying the whole line?
+ROLE       how far the snap share moved against its baseline
+VOLUME     whether touches and targets followed the snaps
+EFFICIENCY how the production was distributed — volume, scores, or one long play
 
-A player who clears all three is projectable. A player who clears only the third
-is a regression candidate the market is about to overprice.
+These three are reported separately and left uncombined. Whether a given
+combination is projectable, already priced, or noise is exactly the judgment the
+analyst is being paid to make, so the dossier does not make it for them.
 """
 
 from __future__ import annotations
@@ -76,8 +73,8 @@ def snap_trends(snaps: pd.DataFrame, team: str, week: int,
 def breakout_candidates(snaps_df: pd.DataFrame, stats: pd.DataFrame, team: str,
                         week: int, min_delta: float = 12.0) -> list[dict]:
     """
-    Players whose role expanded meaningfully, annotated with whether the
-    production behind the role is repeatable.
+    Players whose snap share moved materially, annotated with what the production
+    behind the new role was made of.
     """
     if snaps_df is None or snaps_df.empty:
         return []
@@ -125,32 +122,30 @@ TRENCH = {"T", "LT", "RT", "G", "LG", "RG", "C", "OL", "OT", "OG"}
 
 def _production_profile(stats: pd.DataFrame, player: str, team: str, week: int,
                         unit: str = "OFF", pos: str = "?") -> dict:
-    """Usage and an explicit repeatability read on the latest game."""
+    """Usage and the shape of that usage, for the latest completed week."""
     p = str(pos).upper()
 
     # Box-score stats only describe skill players. For everyone else the snap
     # share IS the finding, and pretending otherwise produces noise.
     if p in TRENCH:
         return {"usage": "offensive line — snap share is the usage measure",
-                "repeatability": "a full-time OL snap share is a settled role; "
-                                 "check whether it came from an injury to the incumbent"}
+                "usage_shape": "OL snap share; cross-reference the injury list for the cause"}
     if p in DEFENSIVE or unit == "DEF":
-        return {"usage": f"defensive role change ({p}) — public box score does not cover snaps-level defence",
-                "repeatability": "durable if it tracks a personnel loss or a package change; "
-                                 "verify against the injury list above"}
+        return {"usage": f"defensive snap-share change ({p}); public box score does not cover defence at this level",
+                "usage_shape": "cross-reference the injury list and depth chart for the cause"}
 
     if stats is None or stats.empty:
-        return {"usage": "no weekly stat file", "repeatability": "unknown"}
+        return {"usage": "no weekly stat file", "usage_shape": "unknown"}
 
     name_col = "player_display_name" if "player_display_name" in stats.columns else "player_name"
     s = stats[(stats[name_col] == player)]
     if s.empty:
-        return {"usage": "no stat rows under this name", "repeatability": "unknown"}
+        return {"usage": "no stat rows under this name", "usage_shape": "unknown"}
 
     cur = s[s["week"] == week]
     if cur.empty:
-        return {"usage": "on the field but recorded no touches or targets",
-                "repeatability": "snaps without usage is a decoy — do not project production"}
+        return {"usage": "on the field, no touches or targets recorded",
+                "usage_shape": "snap share without usage"}
     row = cur.iloc[0]
 
     def num(c):
@@ -167,25 +162,26 @@ def _production_profile(stats: pd.DataFrame, player: str, team: str, week: int,
         bits.append(f"{int(car)} carries for {int(rush)} yds, {int(rtds)} TD")
     usage = "; ".join(bits) or "no touches"
 
-    # Repeatability: TD-heavy, low-volume lines regress hardest. High target
-    # volume at ordinary efficiency is the profile that carries forward.
+    # Reported as structure, not as a verdict. What a TD-heavy line on four touches
+    # means for this week's spread is the analyst's call, not the dossier's.
     flags = []
     tds = rtd + rtds
     touches = tgts + car
     ypt = (ryds + rush) / touches if touches else 0.0
 
-    if touches >= 8 and tds <= 1:
-        flags.append("volume-driven — the role is the signal, projectable")
+    if touches >= 8:
+        flags.append(f"{int(touches)} touches — production came from volume")
     if tds >= 2 and touches <= 6:
-        flags.append("TD-dependent on tiny volume — classic one-week outlier, expect regression")
+        flags.append(f"{int(tds)} TDs on {int(touches)} touches — production concentrated in scores")
     if ypt >= 14 and touches <= 5:
-        flags.append("carried by one explosive play — check the box score before trusting it")
+        flags.append(f"{ypt:.1f} yards per touch on {int(touches)} touches — "
+                     f"check whether one play carries the line")
     if tgts >= 8:
-        flags.append(f"{int(tgts)} targets is a genuine primary-option workload")
+        flags.append(f"{int(tgts)} targets")
     if not flags:
-        flags.append("ordinary line — no strong signal either way")
+        flags.append("no distinctive usage pattern")
 
-    return {"usage": usage, "yards_per_touch": round(ypt, 1), "repeatability": "; ".join(flags)}
+    return {"usage": usage, "yards_per_touch": round(ypt, 1), "usage_shape": "; ".join(flags)}
 
 
 def personnel_losses(depth: pd.DataFrame, injuries: pd.DataFrame, team: str, week: int) -> list[str]:

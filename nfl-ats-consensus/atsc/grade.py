@@ -100,6 +100,10 @@ def grade_submission(submission: dict, lock: dict, results: dict[str, tuple[floa
         "week": lock["week"],
         "lock_sha256": lock["lock"]["sha256"],
         "voided_picks": sorted(voided),
+        # Carried through so the season-long question — which methods actually
+        # work — can be answered from the graded record rather than from vibes.
+        "method": submission.get("method"),
+        "data_gaps": submission.get("data_gaps"),
         "games": graded,
         "wins": wins, "losses": losses, "pushes": pushes,
         "record": f"{wins}-{losses}" + (f"-{pushes}" if pushes else ""),

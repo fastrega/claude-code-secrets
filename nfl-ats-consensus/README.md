@@ -16,18 +16,44 @@ is voided rather than down-weighted.
 
 ## The weekly cadence
 
-| When | Command | What happens |
-|---|---|---|
-| **Tuesday** | `atsc lock` → `atsc verify` | CBS posts. You enter the line once. It is hashed and frozen for the week. |
-| **Tuesday** | `atsc build` | Dossiers + one shared prompt pack. Send to every model. |
-| **Wednesday** | `atsc battle` | Line audit, disagreement map, rebuttal packs for contested games only. |
-| **Wednesday** | `atsc adjudicate` | Adjudicator prompt → the house card. |
-| **Thursday AM** | `atsc build` again | Refreshed injuries/weather. **The line does not move.** TNF picks lock. |
-| **Saturday/Sunday AM** | `atsc build` again | Final refresh for the Sunday slate. Line still does not move. |
-| **Tuesday (next)** | `atsc grade` | Leaderboard, calibration, per-model post-mortem packs. |
+The schedule is built around when NFL information actually lands, not around
+convenience:
 
-Re-running `build` on Thursday and Sunday is the point: injuries, practice reports,
-snap trends and weather all move. The spread never does.
+- **Wednesday evening** — first real injury designations
+- **Friday** — final game designations (Out / Doubtful / Questionable)
+- **90 minutes before kickoff** — official inactives, the last hard information
+
+| When (ET) | Scope | What happens |
+|---|---|---|
+| **Tue 11:00** | full slate | Grade last week. CBS posts → `lock` + `verify`. Full `build`, Round 1 `poll`, `battle`, `adjudicate`. The baseline card. |
+| **Thu 16:00** | `--window thu` | ~4h before TNF. Wednesday designations are in. Re-poll the Thursday game only. |
+| **Sat 12:00** | full slate | Friday's final designations are posted. This is the substantive second pass. |
+| **Sun 10:30** | `--window sun_early` | ~2.5h before the 1pm games. |
+| **Sun 14:00** | `--window sun_late` | ~2h before the 4:05/4:25 window. |
+| **Sun 17:45** | `--window snf` | ~2.5h before Sunday night. |
+| **Mon 16:00** | `--window mnf` | ~4h before Monday night. |
+
+**On the 90-minute inactives.** Running at T-2h gets you every official
+designation plus Saturday news, and leaves the models real time to think. It does
+*not* get you the inactives list, which posts at T-90. That is a deliberate
+trade: a model given 90 minutes produces a considered answer, a model given 10
+produces a reflex. If you want the inactives, run a T-75 check by hand on the one
+or two games where a Questionable player actually matters — a full re-poll of the
+slate at T-75 buys a lot of tokens and very little edge.
+
+**Nothing is re-asked unless it changed.** Every refresh run compares the volatile
+sections of each dossier — environment, injuries, snap roles — against the previous
+build. `--changed-only` writes a prompt pack solely for games that actually moved:
+
+```bash
+# Sunday morning: rebuild the early window, pack only what changed
+python -m atsc.cli build --season 2026 --week 2 --window sun_early --changed-only
+# → "0 games materially changed" means no pack, no poll, nothing spent.
+```
+
+**The line never moves.** Every one of these runs reads the same locked digest.
+Live lines will drift all week and you will see them drift; they are not used, and
+a model that prices off one has its pick voided.
 
 ## Quick start
 
@@ -120,6 +146,37 @@ Per game, from free and open data:
 
 Early in the season, current-year ratings are blended with the prior season on a
 shrinkage weight that decays as games accumulate — one week of data is not a rating.
+
+## Keeping the models independent
+
+A consensus is only worth something if the opinions in it were formed
+independently. Five mechanisms protect that:
+
+**No prescribed method.** Nothing in the prompt tells a model to run a simulation,
+build power ratings, do web research, or reason qualitatively. Each declares its
+own approach in a `method` field and says why it chose it over the alternatives.
+That declaration is graded alongside the picks, so over a season you find out
+which methods actually work rather than assuming.
+
+**The dossier reports, it does not conclude.** This took a deliberate pass to fix.
+Earlier versions said things like `FADE — winning by more than they played` and
+`classic one-week outlier, expect regression`. Those are opinions, and every model
+would have inherited the same one — manufacturing agreement that looks like
+independent confirmation. The dossier now states the measurement (`Gap (actual −
+implied): +8.2 (z=1.9)`) and stops. What that means for the spread is the model's
+call.
+
+**No cross-contamination in Round 1.** No model sees another's picks until every
+card is submitted. The prompt explicitly tells them not to guess at the field and
+position for or against it.
+
+**Randomised game order.** Position in a 45,000-token document affects how much
+attention an item gets. A fixed order would apply the same positional bias to every
+model. `poll` reseeds the order per model, so the bias is uncorrelated. Same
+dossiers, same line, same instructions — only the sequence differs. Override with
+`--same-order` if you want strict byte-identical packs.
+
+**Correlated agreement is flagged, not rewarded.** See `fragile_consensus` below.
 
 ## The battle stage
 
