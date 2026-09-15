@@ -145,11 +145,49 @@ def find_disagreements(lock: dict, submissions: list[dict],
     return report
 
 
-def rebuttal_assignments(lock: dict, submissions: list[dict], disagreements: dict,
-                         include_majority: bool = True) -> list[dict]:
+def _token_overlap(a: str, b: str) -> float:
+    wa, wb = set((a or "").lower().split()), set((b or "").lower().split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / max(len(wa | wb), 1)
+
+
+def distinct_opposing(opposing: list[dict], threshold: float = 0.45) -> list[dict]:
     """
-    Who has to answer whom. Each model on a contested game gets the full opposing
-    case and must hold, adjust, or flip.
+    Collapse the opposing side to its distinct ARGUMENTS, not its headcount.
+
+    This is what protects a lone dissenter. Showing a model five opposing blocks
+    when four of them make the same point is not five refutations — it is one
+    refutation and a majority, and the majority is social pressure rather than
+    evidence. Five models can be wrong together; that is precisely the correlated
+    failure this pipeline exists to detect.
+
+    So: cluster by argument similarity, keep one representative per cluster (the
+    highest-conviction one), and drop the cluster sizes on the floor. The model
+    answers the reasoning and never learns the tally.
+    """
+    clusters: list[list[dict]] = []
+    for p in sorted(opposing, key=lambda x: -(x.get("stars") or 0)):
+        for c in clusters:
+            if _token_overlap(p.get("headline_reason", ""),
+                              c[0].get("headline_reason", "")) >= threshold:
+                c.append(p)
+                break
+        else:
+            clusters.append([p])
+    return [c[0] for c in clusters]
+
+
+def rebuttal_assignments(lock: dict, submissions: list[dict], disagreements: dict,
+                         include_majority: bool = True,
+                         anonymize: bool = True) -> list[dict]:
+    """
+    Who has to answer whom.
+
+    Every model on a contested game answers, in both directions — the majority
+    defends against the dissenter just as the dissenter defends against the
+    majority. With `anonymize` (the default) the opposing cases carry no model
+    names and no counts, so nobody defers to a reputation or folds to a headcount.
     """
     games = {g["game_id"]: g for g in lock["games"]}
     contested = list(disagreements["split"])
@@ -165,6 +203,12 @@ def rebuttal_assignments(lock: dict, submissions: list[dict], disagreements: dic
             opposing = [p for p in picks if p["pick_team"] != mine["pick_team"]]
             if not opposing:
                 continue
+            shown = distinct_opposing(opposing)
+            if anonymize:
+                shown = [dict(p, model=f"Case {chr(65 + i)}") for i, p in enumerate(shown)]
             out.append({"game_id": gid, "game": games[gid], "model": mine["model"],
-                        "mine": mine, "opposing": opposing})
+                        "mine": mine, "opposing": shown,
+                        # Kept for the audit trail, never rendered into the prompt.
+                        "_true_opposing_count": len(opposing),
+                        "_distinct_arguments": len(shown)})
     return out

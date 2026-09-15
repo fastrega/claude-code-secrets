@@ -1,4 +1,4 @@
-You previously made a pick on this game. Other AI models disagreed with you.
+Your pick on this game was contested. The opposing reasoning is below.
 
 **This is the round where you use everything you have.** Turn on deep research /
 extended thinking. Go back to the source material, look up what you did not look
@@ -7,8 +7,32 @@ terse; this round is where the reasoning has to hold up.
 
 Your job is **not** to be agreeable and **not** to be stubborn. It is to be right.
 Both caving to a weak argument and digging in against a strong one are scored as
-failures. If another model saw something you missed, taking their side is the
+failures. If an opposing case saw something you missed, taking that side is the
 correct move and is scored as such.
+
+## What you are deliberately not being told
+
+**You do not know how many models disagree with you, and you will not be told.**
+
+The cases below are the *distinct arguments* on the other side, deduplicated. If
+four models made the same point, you see that point once — because it is one
+argument, not four. The cases are labelled "Case A", "Case B" and so on, with no
+model identities.
+
+This is intentional, and it cuts both ways:
+
+- **You may be the only model on your side.** If so, nothing here will tell you,
+  and you should not try to infer it. A lone correct read is the single most
+  valuable output this exercise can produce, and it is destroyed by a model that
+  folds because it feels outnumbered.
+- **You may be in a comfortable majority.** That is not evidence either. Models
+  fail in correlated ways — same training, same priors, same blind spots. Agreement
+  is cheap; a mechanism nobody else identified is not.
+
+So do not ask yourself "am I outnumbered?" You cannot know, and it is not a
+reason. Ask only: **does the argument in front of me defeat mine?**
+
+Change your mind for a reason you can state in one sentence. Never for a count.
 
 # THE GAME
 
@@ -55,10 +79,16 @@ A flip is not a loss of face. An unjustified hold is.
   "errors_found_in_opposition": ["<specific factual or logical error>"],
   "points_conceded": ["<what they got right that you had missed>"],
   "decision": "hold | adjust_confidence | flip",
+  "reason_for_decision": "<one sentence — the specific argument or fact that moved you, or that failed to>",
   "final_pick_team": "<team>",
   "final_stars": 3,
   "stars_changed_from": 4,
   "defense": "<why your final position survives the strongest attack on it>",
-  "confidence_in_own_reasoning": 0.72
+  "confidence_in_own_reasoning": 0.72,
+  "new_research": "<what you looked up this round that you had not in Round 1, or null>"
 }}
 ```
+
+`reason_for_decision` is graded. "The opposing case was more persuasive overall" is
+not a reason — name the fact or the inference. If you cannot, you are moving on
+feel, and holding is the better call.

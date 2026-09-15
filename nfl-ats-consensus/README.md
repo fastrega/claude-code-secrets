@@ -178,6 +178,36 @@ dossiers, same line, same instructions — only the sequence differs. Override w
 
 **Correlated agreement is flagged, not rewarded.** See `fragile_consensus` below.
 
+### Protecting the lone dissenter
+
+Round 2 is where independence is most at risk, because a model that stands alone
+against the field would normally be *told* it stands alone. That is social
+pressure, not evidence, and it destroys the single most valuable output the system
+can produce: one model being correctly right when everyone else is wrong.
+
+So Round 2 hides the headcount:
+
+- **Opposing cases are deduplicated into distinct arguments.** Four models making
+  the same point appear once, because that is one argument, not four.
+- **No model identities.** Cases are labelled "Case A", "Case B". Nobody defers to
+  a reputation.
+- **No tally, ever.** A model cannot tell whether it is 1-against-5 or 3-against-3,
+  and the prompt tells it explicitly not to try to infer it. The true counts are
+  kept in the audit trail (`_true_opposing_count`) but never rendered into a prompt.
+- **Both directions defend.** The majority answers the dissenter's argument too.
+
+Then it gets measured. `conformity_audit` grades every Round 2 decision and
+separates two opposite failures — **pushover** (flips that lost: moved off a
+correct read under argument) and **stubborn** (holds that lost against a
+correct opposing case). A model whose flips are consistently wrong is being
+persuaded by pressure rather than evidence, and you can drop it from the
+rebuttal round on that evidence.
+
+**Raw replies are archived.** Parsing is lossy — caveats, reasoning preambles and
+anything said outside the JSON would vanish. Every reply is written verbatim to
+`raw/` before parsing, so the record is what the model actually said. A parse
+failure costs you the automation, not the answer.
+
 ## The battle stage
 
 `battle` classifies every game:

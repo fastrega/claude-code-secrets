@@ -407,7 +407,9 @@ def cmd_poll_rebuttals(args: argparse.Namespace) -> int:
             print(f"  skip    {model['name']:<10} {gid} (already answered)")
             continue
         try:
-            parsed, meta = openrouter.ask(model, path.read_text(), max_tokens=8000)
+            parsed, meta = openrouter.ask(
+                model, path.read_text(), max_tokens=8000,
+                archive=paths["rebuttals"] / "raw" / f"{gid}__{model['name']}.md")
             parsed.setdefault("game_id", gid)
             out.write_text(json.dumps(parsed, indent=2) + "\n")
             print(f"  ok      {model['name']:<10} {gid}  {parsed.get('decision', '?'):<18} "
@@ -540,6 +542,17 @@ def cmd_grade(args: argparse.Namespace) -> int:
 
     board = grade.leaderboard(reports)
     print(board + "\n")
+
+    # Round 2 audit: did arguing actually improve anyone's card?
+    rebuttals = [json.loads(p.read_text())
+                 for p in sorted(paths["rebuttals"].glob("*.reply.json"))]
+    conformity = grade.conformity_audit(lock, rebuttals, results) if rebuttals else {}
+    if conformity:
+        print("Round 2 — flips vs holds:")
+        for model, c in conformity.items():
+            print(f"  {model:<12} flips {c['flips']}  holds {c['holds']}  — {c['verdict']}")
+        (paths["results"] / "conformity.json").write_text(json.dumps(conformity, indent=2))
+        print()
 
     for r in reports:
         c = r["calibration"]

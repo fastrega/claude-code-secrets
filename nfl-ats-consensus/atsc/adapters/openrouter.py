@@ -147,8 +147,15 @@ def extract_json(text: str) -> dict:
 
 
 def ask(model: dict, prompt: str, *, max_tokens: int = 16000,
-        temperature: float = 0.3) -> tuple[dict, dict]:
-    """Send one prompt to one model. Returns (parsed_json, metadata)."""
+        temperature: float = 0.3, archive: Path | None = None) -> tuple[dict, dict]:
+    """
+    Send one prompt to one model. Returns (parsed_json, metadata).
+
+    When `archive` is given, the untouched response text is written there before
+    parsing. Parsing is lossy — a model's caveats, its reasoning preamble, and
+    anything it said outside the JSON all disappear. Keeping the raw text means
+    the record is what the model actually said, not what the parser kept.
+    """
     payload: dict[str, Any] = {
         "model": model["slug"],
         "messages": [{"role": "user", "content": prompt}],
@@ -162,7 +169,18 @@ def ask(model: dict, prompt: str, *, max_tokens: int = 16000,
     t0 = time.time()
     resp = _request("/chat/completions", payload)
     choice = (resp.get("choices") or [{}])[0]
-    content = (choice.get("message") or {}).get("content") or ""
+    message = choice.get("message") or {}
+    content = message.get("content") or ""
+
+    if archive:
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        # Some providers return the reasoning trace separately from the answer.
+        trace = message.get("reasoning") or message.get("reasoning_content") or ""
+        archive.write_text(
+            f"<!-- model: {model['name']} | slug: {model['slug']} | "
+            f"finish: {choice.get('finish_reason')} -->\n\n"
+            + (f"## Reasoning trace\n\n{trace}\n\n## Response\n\n" if trace else "")
+            + content)
 
     parsed = extract_json(content)
     parsed.setdefault("model", model["name"])
@@ -187,7 +205,9 @@ def fan_out(models: list[dict], prompt: str | Callable[[dict], str], out_dir: Pa
     Ask every API-lane model in parallel; write one JSON file each.
 
     One model failing never blocks the rest — a partial field is still a usable
-    consensus, and the missing model can be added later by hand.
+    consensus, and the missing model can be added later by hand. Every raw reply
+    is archived under `raw/` first, so a parse failure costs you the automation,
+    not the answer.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     api = [m for m in models if m.get("lane") == "openrouter"]
@@ -212,14 +232,21 @@ def fan_out(models: list[dict], prompt: str | Callable[[dict], str], out_dir: Pa
         return results
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(ask, m, prompt_for(m)): m for m in api}
+        futures = {
+            pool.submit(ask, m, prompt_for(m),
+                        archive=out_dir / "raw" / f"{m['name']}{suffix}.md"): m
+            for m in api
+        }
         for fut in as_completed(futures):
             m = futures[fut]
             try:
                 parsed, meta = fut.result()
             except Exception as e:
-                on_event(f"  FAILED  {m['name']:<10} {type(e).__name__}: {e}")
-                results["failed"].append({"model": m["name"], "error": str(e)})
+                raw = out_dir / "raw" / f"{m['name']}{suffix}.md"
+                hint = f" (raw reply saved to {raw.name})" if raw.exists() else ""
+                on_event(f"  FAILED  {m['name']:<10} {type(e).__name__}: {e}{hint}")
+                results["failed"].append({"model": m["name"], "error": str(e),
+                                          "raw_saved": raw.exists()})
                 continue
 
             parsed["_meta"] = meta

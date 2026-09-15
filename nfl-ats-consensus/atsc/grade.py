@@ -168,6 +168,80 @@ def leaderboard(reports: list[dict]) -> str:
     return "\n".join(out)
 
 
+def conformity_audit(lock: dict, rebuttals: list[dict],
+                     results: dict[str, tuple[float, float]]) -> dict[str, Any]:
+    """
+    Did arguing help, and did anyone fold?
+
+    For every Round 2 decision, grade the position the model ended on. Two failure
+    modes matter and they are opposite:
+
+    PUSHOVER   flips that lost — moved off a correct read under argument.
+    STUBBORN   holds that lost where the opposing case was right.
+
+    Over a season this is the most honest measure of whether a model is thinking
+    independently. A model whose flips are consistently wrong is being persuaded by
+    social pressure rather than by evidence, and its Round 2 output should be
+    discounted — or it should be dropped from the rebuttal round entirely.
+    """
+    locked = {g["game_id"]: float(g["cbs_spread_home"]) for g in lock["games"]}
+    per_model: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"flip_win": 0, "flip_loss": 0, "hold_win": 0, "hold_loss": 0,
+                 "adjust": 0, "detail": []})
+
+    for r in rebuttals:
+        gid = r.get("game_id")
+        model = r.get("model")
+        team = r.get("final_pick_team")
+        if gid not in results or gid not in locked or not team:
+            continue
+
+        hs, as_ = results[gid]
+        game = next((g for g in lock["games"] if g["game_id"] == gid), None)
+        if game is None:
+            continue
+        side = "home" if team == game["home_team"] else "away"
+        graded = grade_pick({"game_id": gid, "pick_side": side,
+                             "stars": r.get("final_stars", 1)}, hs, as_, locked[gid])
+
+        decision = (r.get("decision") or "").lower()
+        # An adjustment keeps the side, so it counts as a hold for win/loss
+        # purposes and is tallied separately as a confidence move.
+        bucket = "flip" if decision == "flip" else "hold"
+        if decision == "adjust_confidence":
+            per_model[model]["adjust"] += 1
+        if graded["result"] != "push":
+            per_model[model][f"{bucket}_{graded['result']}"] += 1
+
+        per_model[model]["detail"].append({
+            "game_id": gid, "decision": decision, "final": team,
+            "result": graded["result"],
+            "reason": r.get("reason_for_decision") or r.get("defense"),
+        })
+
+    out: dict[str, Any] = {}
+    for model, d in per_model.items():
+        flips = d["flip_win"] + d["flip_loss"]
+        holds = d["hold_win"] + d["hold_loss"]
+        if flips >= 2 and d["flip_loss"] > d["flip_win"]:
+            verdict = ("pushover — changing position under argument cost more than it "
+                       "gained; discount this model's Round 2 moves")
+        elif flips >= 2 and d["flip_win"] > d["flip_loss"]:
+            verdict = "persuadable in a good way — flips improved the card"
+        elif holds and not flips:
+            verdict = "never moved; no evidence either way on persuadability"
+        else:
+            verdict = "too few decisions to judge"
+        out[model] = {
+            "flips": f"{d['flip_win']}-{d['flip_loss']}",
+            "holds": f"{d['hold_win']}-{d['hold_loss']}",
+            "confidence_adjustments": d["adjust"],
+            "verdict": verdict,
+            "detail": d["detail"],
+        }
+    return out
+
+
 def contrarian_games(reports: list[dict], model: str) -> str:
     """Games where one model stood alone — the most informative rows in the week."""
     picks: dict[str, dict[str, dict]] = defaultdict(dict)
