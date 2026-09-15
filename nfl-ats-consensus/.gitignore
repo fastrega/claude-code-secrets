@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Generated each run from the locked line plus live nflverse data.
+data/dossiers/
+# Model submissions and grades. Remove these two lines if you want the full
+# audit trail committed to git — recommended once you are running for real.
+data/picks/
+data/results/

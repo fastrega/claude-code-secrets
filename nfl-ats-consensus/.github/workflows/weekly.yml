@@ -1,0 +1,110 @@
+name: ATS weekly pipeline
+
+# Three runs a week, matching how information actually arrives.
+# Cron is UTC. Adjust if you are not on US Eastern.
+on:
+  schedule:
+    - cron: "0 15 * * 2"   # Tuesday 11:00 ET — CBS line is up; lock and build
+    - cron: "0 13 * * 4"   # Thursday 09:00 ET — Wednesday practice reports in
+    - cron: "0 13 * * 0"   # Sunday   09:00 ET — final designations and weather
+  workflow_dispatch:
+    inputs:
+      season:
+        description: Season
+        required: true
+        default: "2026"
+      week:
+        description: Week
+        required: true
+      stage:
+        description: build | battle | adjudicate | grade
+        required: true
+        default: build
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nfl-ats-consensus
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # nflverse release assets are rebuilt nightly in season; caching them keeps
+      # the Thursday and Sunday runs to a few seconds.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/atsc
+          key: nflverse-${{ github.run_id }}
+          restore-keys: nflverse-
+
+      - name: Resolve season and week
+        id: sw
+        run: |
+          if [ -n "${{ inputs.season }}" ]; then
+            echo "season=${{ inputs.season }}" >> "$GITHUB_OUTPUT"
+            echo "week=${{ inputs.week }}" >> "$GITHUB_OUTPUT"
+          else
+            python - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime as dt, pandas as pd, sys
+          sys.path.insert(0, ".")
+          from atsc.sources import nflverse
+          s = nflverse.schedules()
+          today = pd.Timestamp(dt.date.today())
+          up = s[(pd.to_datetime(s.gameday) >= today) & (s.result.isna())]
+          row = up.sort_values("gameday").iloc[0]
+          print(f"season={int(row.season)}")
+          print(f"week={int(row.week)}")
+          PY
+          fi
+
+      # The line lock is committed to the repo and must already exist. This job
+      # never creates or modifies it — freezing the line is a deliberate human act.
+      - name: Verify the locked line
+        run: |
+          python -m atsc.cli verify \
+            --season ${{ steps.sw.outputs.season }} \
+            --week ${{ steps.sw.outputs.week }}
+
+      - name: Build dossiers
+        if: inputs.stage == 'build' || inputs.stage == ''
+        run: |
+          python -m atsc.cli build \
+            --season ${{ steps.sw.outputs.season }} \
+            --week ${{ steps.sw.outputs.week }}
+
+      - name: Battle and adjudicate
+        if: inputs.stage == 'battle' || inputs.stage == 'adjudicate'
+        run: |
+          python -m atsc.cli battle \
+            --season ${{ steps.sw.outputs.season }} --week ${{ steps.sw.outputs.week }}
+          python -m atsc.cli adjudicate \
+            --season ${{ steps.sw.outputs.season }} --week ${{ steps.sw.outputs.week }}
+
+      - name: Grade
+        if: inputs.stage == 'grade'
+        run: |
+          python -m atsc.cli grade \
+            --season ${{ steps.sw.outputs.season }} --week ${{ steps.sw.outputs.week }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atsc-${{ steps.sw.outputs.season }}-wk${{ steps.sw.outputs.week }}
+          path: nfl-ats-consensus/data/
+
+      # Commit the generated dossiers and results so the audit trail lives in git.
+      - name: Commit outputs
+        run: |
+          git config user.name "atsc-bot"
+          git config user.email "atsc-bot@users.noreply.github.com"
+          git add data/
+          git diff --staged --quiet || git commit -m \
+            "atsc: ${{ steps.sw.outputs.season }} week ${{ steps.sw.outputs.week }} refresh"
+          git push || true
