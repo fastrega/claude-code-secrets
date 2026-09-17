@@ -81,14 +81,41 @@ def game_context(game: dict[str, Any], *, with_weather: bool = True) -> dict[str
     home, away = game["home_team"], game["away_team"]
     hm, am = TEAMS[home], TEAMS[away]
 
-    venue_roof = str(game.get("roof") or hm["roof"] or "").lower()
-    indoor = venue_roof in {"dome", "closed"}
+    # config/team_meta.json is authoritative for roof and surface; the nflverse
+    # schedule columns lag stadium changes by a season or more (Week 2 of 2026 had
+    # Buffalo on turf and Tennessee on grass, both wrong). Where they disagree the
+    # curated value wins and the conflict is recorded, not silently dropped.
+    venue_roof = str(hm["roof"]).lower()          # fixed | retractable | canopy | open
+    exposure = hm.get("weather_exposure", "always")
+    nfl_surface = str(game.get("surface") or "").lower()
+    surface = hm["surface"]
+    conflicts = []
+    if nfl_surface and nfl_surface not in surface.lower().replace(" ", "").replace("-", ""):
+        rough = {"grass": "grass", "hybrid": "grass"}.get(hm.get("surface_class"), "turf")
+        looks_same = (rough == "grass") == ("grass" in nfl_surface)
+        if not looks_same:
+            conflicts.append(f"nflverse lists surface as '{nfl_surface}', "
+                             f"reference says {surface} ({hm.get('surface_class')})")
+    nfl_roof = str(game.get("roof") or "").lower()
+    if nfl_roof and nfl_roof not in {"nan", ""}:
+        same = ((venue_roof == "open" and nfl_roof == "outdoors")
+                or (venue_roof == "fixed" and nfl_roof in {"dome", "closed"})
+                or (venue_roof in {"retractable", "canopy"} and nfl_roof in {"dome", "closed", "open"}))
+        if not same:
+            conflicts.append(f"nflverse lists roof as '{nfl_roof}', reference says {venue_roof}")
+
+    # Only a fixed enclosed roof makes weather a non-factor. A retractable roof is
+    # a gameday decision, and SoFi's canopy has open sides.
+    indoor = venue_roof == "fixed"
 
     ctx: dict[str, Any] = {
         "venue": hm["stadium"],
         "roof": venue_roof or "unknown",
         "indoor": indoor,
-        "surface": game.get("surface") or hm["surface"],
+        "surface": surface,
+        "surface_class": hm.get("surface_class"),
+        "weather_exposure": exposure,
+        "source_conflicts": conflicts,
         "altitude_ft": hm["alt_ft"],
         "altitude_note": ("~17% lower air density than sea level; measurably affects "
                           "kick distance and ball carry." if hm["alt_ft"] > 4000 else ""),
@@ -132,16 +159,18 @@ def game_context(game: dict[str, Any], *, with_weather: bool = True) -> dict[str
     # Surface / roof transitions — the dome-offence-outdoors problem.
     ctx["away_home_roof"] = am["roof"]
     ctx["away_home_surface"] = am["surface"]
-    ctx["roof_change"] = (am["roof"] in {"dome", "closed"}) and not indoor
-    ctx["surface_change"] = (am["surface"] == "grass") != (str(ctx["surface"]) == "grass")
-    if ctx["roof_change"]:
-        ctx["roof_change_note"] = f"{away} plays home games indoors; this game is outdoors."
-    else:
-        ctx["roof_change_note"] = ""
+    ctx["roof_change"] = am["roof"] == "fixed" and venue_roof != "fixed"
+    # Compare surface CLASS, not brand name: Bermuda vs Kentucky bluegrass is not a
+    # surface change, grass vs Matrix Helix is. Hybrid counts as natural.
+    natural = {"grass", "hybrid"}
+    ctx["surface_change"] = (am.get("surface_class") in natural) != (hm.get("surface_class") in natural)
+    ctx["roof_change_note"] = (
+        f"{away} plays home games under a fixed roof; this venue is {venue_roof}."
+        if ctx["roof_change"] else "")
 
     if indoor:
         ctx["weather"] = {"available": True, "indoor": True,
-                          "summary": "Indoors — weather is a non-factor."}
+                          "summary": "Fixed enclosed roof — weather is a non-factor."}
     elif with_weather:
         w = fetch_weather(hm["lat"], hm["lon"], str(game.get("gameday")), kick_hour)
         if w.get("available"):
@@ -150,9 +179,22 @@ def game_context(game: dict[str, Any], *, with_weather: bool = True) -> dict[str
             w["wind_meaning"] = meaning
             w["summary"] = (f"{w['temp_f']:.0f}°F, wind {w['wind_mph']:.0f} mph "
                             f"(gusts {w['gust_mph']:.0f}), precip {w['precip_pct']}% — {band}. {meaning}")
+            if venue_roof == "retractable":
+                w["summary"] += (" RETRACTABLE ROOF: this forecast applies only if the roof is "
+                                 "open. The club declares it about 90 minutes before kickoff, "
+                                 "and the NFL may force it closed for precipitation, lightning, "
+                                 "cold or high wind.")
+            elif venue_roof == "canopy":
+                w["summary"] += (" CANOPY WITH OPEN SIDES (SoFi): not a sealed dome. Rain does not "
+                                 "reach the field but wind can, so treat the effect as reduced "
+                                 "rather than absent.")
         else:
             w["summary"] = ("WEATHER UNAVAILABLE — do not assume calm conditions. "
                             "Fill this in manually from NFLWeather.com before finalising.")
+            if venue_roof == "retractable":
+                w["summary"] += " Venue has a retractable roof; if closed, weather is moot."
+            elif venue_roof == "canopy":
+                w["summary"] += " Venue is SoFi: canopy overhead, open sides — wind can intrude."
         ctx["weather"] = w
     else:
         ctx["weather"] = {"available": False, "summary": "weather fetch disabled"}

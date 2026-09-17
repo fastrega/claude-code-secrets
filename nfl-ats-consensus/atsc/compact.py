@@ -160,17 +160,28 @@ def render(lock: dict, tt: pd.DataFrame, sched: pd.DataFrame, inj: pd.DataFrame,
         A(f"- {h}: adjNet {f(v(h,'net_epa_adj'))} (off {f(v(h,'off_epa_adj'))}, "
           f"def {f(v(h,'def_epa_adj'))}), luck {f(v(h,'luck_margin'),1)}")
         if row is not None:
-            # nflverse leaves `roof` blank for retractable-roof venues until the
-            # club declares it. Blank must not read as "outdoors" — a model that
-            # infers wind at a domed stadium will misprice the total and the
-            # kicking game. Fall back to the venue's default and label it.
-            roof = str(row.get("roof") or "").strip()
-            if not roof or roof == "nan":
-                default = TEAMS.get(h, {}).get("roof", "unknown")
-                roof = f"{default} (retractable — status not yet declared)"
-            A(f"- venue: {row.get('stadium')}, roof {roof}, "
-              f"surface {row.get('surface')}; rest {h} {row.get('home_rest')}d vs "
-              f"{a} {row.get('away_rest')}d; kickoff {row.get('weekday')} {row.get('gametime')}")
+            # Roof and surface come from config/STADIUMS.md, not from the schedule
+            # file: nflverse lags stadium changes and a wrong surface or a blank
+            # roof read as "outdoors" produces confidently wrong weather takes.
+            hm = TEAMS[h]
+            roof_note = {
+                "fixed": "fixed enclosed — weather never a factor",
+                "retractable": "RETRACTABLE — open/closed declared ~90 min before kick",
+                "canopy": "canopy with OPEN SIDES (SoFi) — rain no, wind yes",
+                "open": "open air",
+            }.get(hm["roof"], hm["roof"])
+            A(f"- venue: {hm['stadium']}, roof {roof_note}; "
+              f"surface {hm['surface']} ({hm.get('surface_class')})")
+            away_nat = TEAMS[a].get("surface_class") in {"grass", "hybrid"}
+            home_nat = hm.get("surface_class") in {"grass", "hybrid"}
+            if away_nat != home_nat:
+                A(f"  - surface change: {a} plays home games on "
+                  f"{TEAMS[a]['surface']} ({TEAMS[a].get('surface_class')})")
+            if TEAMS[a]["roof"] == "fixed" and hm["roof"] != "fixed":
+                A(f"  - {a} plays home games under a fixed roof; this venue is {hm['roof']}")
+            A(f"- rest: {h} {row.get('home_rest')}d vs {a} {row.get('away_rest')}d; "
+              f"kickoff {row.get('weekday')} {row.get('gametime')}; "
+              f"altitude {hm['alt_ft']} ft")
         A(f"- {a} practice: {_dnp_summary(inj, a, week)}")
         A(f"- {h} practice: {_dnp_summary(inj, h, week)}")
         A("")
