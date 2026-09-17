@@ -112,9 +112,18 @@ def cmd_lock(args: argparse.Namespace) -> int:
                 "verified": False,
             })
 
+    acknowledged = {}
+    for item in (args.acknowledge or []):
+        if "=" not in item:
+            print(f"  ! --acknowledge expects GAME_ID=reason, got {item!r}")
+            return 1
+        gid, reason = item.split("=", 1)
+        acknowledged[gid.strip()] = reason.strip()
+
     payload = {
         "schema_version": linelock.SCHEMA_VERSION,
         "season": season, "week": week,
+        "acknowledged_divergences": acknowledged,
         "line_source": "CBS Sports — Tuesday posting",
         "convention": "cbs_spread_home is negative when the HOME team is favoured",
         "all_verified": all(g["verified"] for g in games),
@@ -588,6 +597,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--locked-by")
     p.add_argument("--source-url", default="https://www.cbssports.com/nfl/odds/")
     p.add_argument("--captured-at", help="date you read the CBS page, YYYY-MM-DD")
+    p.add_argument("--acknowledge", nargs="+", metavar="GAME_ID=REASON",
+                   help="confirm a known large divergence from the market reference, "
+                        "e.g. 2026_02_GB_NYJ='market moved a point since Tuesday'. "
+                        "Recorded in the lock file; never silences the check.")
     p.set_defaults(func=cmd_lock)
 
     p = sub.add_parser("verify", help="run the three line-integrity checks")

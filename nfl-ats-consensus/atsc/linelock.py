@@ -190,6 +190,11 @@ def check_cross_source(payload: dict[str, Any], market: dict[str, float]) -> Che
     notes: list[str] = []
     compared = 0
 
+    # A divergence a human has looked at and confirmed is no longer an alarm. It
+    # stays visible as a note, with the reason, so the audit trail records that
+    # somebody checked rather than that the check was switched off.
+    acknowledged: dict[str, str] = payload.get("acknowledged_divergences") or {}
+
     for g in payload.get("games", []):
         gid = g.get("game_id")
         cbs = g.get("cbs_spread_home")
@@ -205,10 +210,14 @@ def check_cross_source(payload: dict[str, Any], market: dict[str, float]) -> Che
 
         if abs(delta) >= DIVERGENCE_ESCALATE:
             direction = "flipped side" if cbs * ref < 0 else "large gap"
-            esc.append(
-                f"[{gid}] CBS home spread {cbs:+.1f} vs market {ref:+.1f} "
-                f"(delta {delta:+.1f}, {direction}) — re-read the CBS page before locking"
-            )
+            msg = (f"[{gid}] CBS home spread {cbs:+.1f} vs market {ref:+.1f} "
+                   f"(delta {delta:+.1f}, {direction})")
+            if gid in acknowledged:
+                g["_divergence_acknowledged"] = acknowledged[gid]
+                notes.append(f"{msg} — ACKNOWLEDGED: {acknowledged[gid]}")
+            else:
+                esc.append(f"{msg} — re-read the CBS page before locking, or record "
+                           f"an acknowledgement if the market has simply moved since Tuesday")
         elif abs(delta) >= DIVERGENCE_NOTE:
             notes.append(f"[{gid}] CBS {cbs:+.1f} vs market {ref:+.1f} (delta {delta:+.1f}) — plausible, worth a glance")
 
