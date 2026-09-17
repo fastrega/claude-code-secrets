@@ -243,7 +243,31 @@ confidence signal, and that is a fixable problem the raw record completely hides
 are stored and git history is forever. If a key has ever been pasted somewhere it
 should not have been, rotate it at <https://openrouter.ai/keys> rather than hoping.
 
-Two safe homes, checked in this order (a real environment variable beats both):
+### Windows
+
+You need [Git](https://git-scm.com/download/win) and
+[Python 3.11+](https://www.python.org/downloads/windows/) (tick **"Add python.exe
+to PATH"** during install). Then, in Command Prompt:
+
+```bat
+cd %USERPROFILE%
+git clone https://github.com/fastrega/claude-code-secrets.git
+cd claude-code-secrets
+git checkout claude/sports-betting-data-platforms-hrwmbw
+cd nfl-ats-consensus
+python -m pip install -r requirements.txt
+powershell -ExecutionPolicy Bypass -File .\setup-key.ps1
+```
+
+`setup-key.ps1` reads the key as a SecureString so it is never echoed and never
+becomes a command argument, writes it to `%USERPROFILE%\.config\atsc\env`, and
+resets the file ACL so only your account can read it — the NTFS equivalent of
+`chmod 600`.
+
+### macOS and Linux
+
+`./setup-key.sh` does the same thing. Or place the key by hand — two safe homes,
+checked in this order (a real environment variable beats both):
 
 ```bash
 # Per-repo — gitignored, never leaves this directory
