@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .features.context import TEAMS
+
 
 def _dnp_summary(inj: pd.DataFrame, team: str, week: int, limit: int = 6) -> str:
     """Wednesday practice reality, which is what exists before Friday."""
@@ -158,8 +160,15 @@ def render(lock: dict, tt: pd.DataFrame, sched: pd.DataFrame, inj: pd.DataFrame,
         A(f"- {h}: adjNet {f(v(h,'net_epa_adj'))} (off {f(v(h,'off_epa_adj'))}, "
           f"def {f(v(h,'def_epa_adj'))}), luck {f(v(h,'luck_margin'),1)}")
         if row is not None:
-            roof = str(row.get("roof") or "")
-            A(f"- venue: {row.get('stadium')}, roof {roof or 'n/a'}, "
+            # nflverse leaves `roof` blank for retractable-roof venues until the
+            # club declares it. Blank must not read as "outdoors" — a model that
+            # infers wind at a domed stadium will misprice the total and the
+            # kicking game. Fall back to the venue's default and label it.
+            roof = str(row.get("roof") or "").strip()
+            if not roof or roof == "nan":
+                default = TEAMS.get(h, {}).get("roof", "unknown")
+                roof = f"{default} (retractable — status not yet declared)"
+            A(f"- venue: {row.get('stadium')}, roof {roof}, "
               f"surface {row.get('surface')}; rest {h} {row.get('home_rest')}d vs "
               f"{a} {row.get('away_rest')}d; kickoff {row.get('weekday')} {row.get('gametime')}")
         A(f"- {a} practice: {_dnp_summary(inj, a, week)}")
