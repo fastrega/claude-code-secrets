@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import battle, grade, linelock, prompt, report
+from . import battle, compact, grade, linelock, prompt, report
 from .dossier import build as build_dossier
 from .sources import nflverse
 
@@ -292,6 +292,38 @@ def cmd_build(args: argparse.Namespace) -> int:
     print(f"Prompt pack: {out}  ({len(pack):,} chars, ~{len(pack)//4:,} tokens)")
     print(f"Line digest: {lock['lock']['sha256']}  (unchanged — the line never moves)")
     print(f"\n  python -m atsc.cli poll --season {season} --week {week} --pack {name}")
+    return 0
+
+
+def cmd_paste(args: argparse.Namespace) -> int:
+    """Render the compact, paste-into-a-chat-box version of the week's prompt."""
+    season, week = args.season, args.week
+    paths = _paths(season, week)
+    lock = _load_lock(season, week)
+
+    sched_all = nflverse.schedules()
+    sched = sched_all[sched_all.season == season]
+    from .features.team import team_table
+    games_played = int(sched[sched["result"].notna()]["week"].nunique())
+    tt = team_table(nflverse.pbp(season), nflverse.pbp(season - 1), sched, games_played)
+    week_sched = nflverse.week_games(season, week)
+    inj = nflverse.injuries(season)
+
+    gaps = [
+        "kickoff weather for outdoor games — fetch blocked in this environment",
+        "final Friday injury designations; only Wednesday practice participation is available",
+        "snap counts and weekly player stats cover completed weeks only",
+        "PFF coverage and alignment grades, SIS charting, physician injury grades",
+        "coaching head-to-head history and scheme-familiarity notes",
+    ]
+    text = compact.render(lock, tt, week_sched, inj, week, gaps)
+    out = paths["dossiers"] / "PASTE_PROMPT.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text)
+    print(f"Wrote {out}  ({len(text):,} chars, ~{len(text)//4:,} tokens)")
+    if args.show:
+        print("\n" + "=" * 70 + "\n")
+        print(text)
     return 0
 
 
@@ -619,6 +651,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--allow-unverified", action="store_true",
                    help="dry run against placeholder lines — never distribute the output")
     p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("paste", help="render the compact paste-into-a-chat-box prompt")
+    common(p)
+    p.add_argument("--show", action="store_true", help="also print it to stdout")
+    p.set_defaults(func=cmd_paste)
 
     p = sub.add_parser("models", help="list the roster, or what your OpenRouter key can reach")
     p.add_argument("--roster", action="store_true", help="show config/models.json instead of querying")

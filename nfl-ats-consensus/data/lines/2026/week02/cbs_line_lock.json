@@ -3,10 +3,11 @@
   "season": 2026,
   "week": 2,
   "acknowledged_divergences": {
-    "2026_02_DET_BUF": "matches Tuesday market snapshot exactly; market has since moved to -5.5",
-    "2026_02_CAR_ATL": "matches Tuesday market snapshot exactly; market has since moved to +2.5",
-    "2026_02_MIN_CHI": "matches Tuesday market snapshot exactly; market has since moved to -4.5",
-    "2026_02_WAS_DAL": "matches Tuesday market snapshot exactly; market has since moved to -4.5"
+    "2026_02_DET_BUF": "matches Tuesday market snapshot exactly; market since moved to -5.5",
+    "2026_02_CAR_ATL": "matches Tuesday market snapshot exactly; market since moved to +2.5",
+    "2026_02_MIN_CHI": "matches Tuesday market snapshot exactly; market since moved to -4.5",
+    "2026_02_WAS_DAL": "matches Tuesday market snapshot exactly; market since moved to -4.5",
+    "2026_02_NO_BAL": "matches Tuesday market snapshot exactly; market since moved to -7.5"
   },
   "line_source": "CBS Sports \u2014 Tuesday posting",
   "convention": "cbs_spread_home is negative when the HOME team is favoured",
@@ -206,10 +207,10 @@
     }
   ],
   "lock": {
-    "sha256": "b7fb5073ec0d7a8f33c207bdb29f502e2dacb769c7dd37a3e78260fe2561bf8d",
-    "locked_at_utc": "2026-09-17T16:18:24+00:00",
+    "sha256": "d1b422bc55a5831bc7f1262691c8f853a158e5d20c6e4af74326e3e7235b21ed",
+    "locked_at_utc": "2026-09-17T22:37:55+00:00",
     "locked_by": "anthonyrega",
-    "reason": "CBS Tuesday line entered from cbssports.com/nfl/odds",
-    "supersedes_sha256": "fce2839b4fce4b04b643167bb476047814e1b305f7a2df35eedba7dd65d648e4"
+    "reason": "re-sign: digest now excludes acknowledgement notes so it stays stable as the market drifts",
+    "supersedes_sha256": "b7fb5073ec0d7a8f33c207bdb29f502e2dacb769c7dd37a3e78260fe2561bf8d"
   }
 }

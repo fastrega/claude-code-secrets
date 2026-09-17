@@ -72,9 +72,16 @@ def _strip_derived(obj: Any) -> Any:
     the divergence). Those are computed, not authored, so they must not move the
     digest — otherwise merely checking the file would invalidate it.
     """
+    # `acknowledged_divergences` is a verification note, not part of the line. The
+    # market drifts all week, so new acknowledgements get added on Thursday and
+    # Saturday — and if those moved the digest, the number every model echoes back
+    # would change mid-week while the spreads had not moved at all. The digest
+    # covers the spreads; acknowledgements stay visible in the file and in the
+    # git history instead.
+    skip = {"lock", "acknowledged_divergences"}
     if isinstance(obj, dict):
         return {k: _strip_derived(v) for k, v in obj.items()
-                if not k.startswith("_") and k != "lock"}
+                if not k.startswith("_") and k not in skip}
     if isinstance(obj, list):
         return [_strip_derived(v) for v in obj]
     return obj
