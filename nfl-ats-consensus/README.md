@@ -123,24 +123,27 @@ The digest is printed in the prompt pack and every model echoes it back in
 Per game, from free and open data:
 
 - **Locked line** with its provenance and cross-check delta
-- **Environment** — roof, surface, altitude, travel miles, time-zone shift, body-clock
-  kickoff hour, rest asymmetry, dome-team-outdoors and surface-change flags, and
-  a wind reading banded by its *actual measured effect* (nothing below 8 mph
-  matters; 15+ is where passing and long field goals genuinely degrade)
+- **Environment** — roof, surface, altitude, travel miles, time-zone shift,
+  body-clock kickoff hour, rest asymmetry, fixed-roof-team-outdoors and
+  surface-change flags, and a wind reading banded by its *measured effect*
+  (nothing below 8 mph is detectable; 15+ is where passing and long field goals
+  measurably degrade). Roof and surface come from `config/STADIUMS.md`, which
+  overrides nflverse — the schedule file lags stadium changes by a season or more
 - **Opponent-adjusted efficiency** — iteratively adjusted EPA for offence and
   defence, plus the average opponent quality faced, so a "fake good" unit that has
   only played bad offences is visible rather than just silently corrected
-- **Variance ledger** — EPA-implied margin vs actual margin, fumble-recovery luck,
-  kicking luck against a distance-adjusted baseline, penalty burden, one-score
-  record, with explicit FADE / BUY regression flags
+- **Variance ledger** — EPA-implied margin vs actual margin (with a z-score),
+  fumble-recovery luck, kicking luck against a distance-adjusted baseline, penalty
+  burden and one-score record, reported as measurements with no verdict attached
 - **Last-game forensics** — turnovers, missed field goals, penalty yards, explosive
   plays made and allowed, conditions, and the gap between how the game was played
   and how it finished
 - **Injuries** — official report rows separated from practice-report-only noise,
   plus a 0-100 triage score per unit (QB, OL, pass-catchers, RB, secondary, front seven)
-- **Emerging players** — snap-share movement against a prior baseline, with an
-  explicit repeatability verdict: volume-driven roles are projectable, two
-  touchdowns on four touches is not, and snaps without usage is called out as a decoy
+- **Emerging players** — snap-share movement against a prior baseline, with the
+  shape of the production behind it stated separately: touches, scores, yards per
+  touch, and snaps recorded without any usage at all. Whether that is projectable
+  is left to the model
 - **Named gaps** — what the packet does *not* have (PFF alignment grades, SIS
   charting, SICScore) so no model can quietly pretend it does
 
@@ -233,6 +236,49 @@ than a 5-star win (+4.5) gains, which is what discourages confidence inflation.
 Calibration is reported separately, and it is the most useful output of the whole
 system. A model whose 4-star picks lose while its 1-star leans win has an *inverted*
 confidence signal, and that is a fixable problem the raw record completely hides.
+
+## Where the API key goes
+
+**Never paste a key into a chat window, a commit, or an issue.** Chat transcripts
+are stored and git history is forever. If a key has ever been pasted somewhere it
+should not have been, rotate it at <https://openrouter.ai/keys> rather than hoping.
+
+Two safe homes, checked in this order (a real environment variable beats both):
+
+```bash
+# Per-repo — gitignored, never leaves this directory
+cp .env.example .env && chmod 600 .env
+$EDITOR .env          # OPENROUTER_API_KEY=sk-or-v1-...
+
+# Or all-repos — outside the git tree entirely, which is safer
+mkdir -p ~/.config/atsc && chmod 700 ~/.config/atsc
+printf 'OPENROUTER_API_KEY=sk-or-v1-...\n' > ~/.config/atsc/env
+chmod 600 ~/.config/atsc/env
+```
+
+For **GitHub Actions**, use a repository secret instead: Settings → Secrets and
+variables → Actions → New repository secret, named `OPENROUTER_API_KEY`. The
+workflow already reads it from there and skips the polling step when it is absent,
+so a fork or a clone without the secret still builds dossiers without failing.
+
+Check the wiring without ever revealing the key:
+
+```
+$ python -m atsc.cli doctor
+API key
+  found via: /path/to/.env
+  looks valid, sha256 fingerprint d918c9e5e657 (the key itself is never printed)
+
+Git hygiene
+  no secret files are tracked by git
+  .env is gitignored
+
+Connectivity
+  reached OpenRouter, 312 models available to this key
+```
+
+`doctor` prints a truncated SHA-256 fingerprint, never the key — enough to confirm
+which key is loaded and useless to anyone who sees it over your shoulder.
 
 ## Data sources
 

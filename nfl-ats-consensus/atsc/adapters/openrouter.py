@@ -33,13 +33,72 @@ class OpenRouterError(RuntimeError):
     pass
 
 
+# Searched in order. The first file that defines the key wins, and a real
+# environment variable beats all of them. Nothing here is ever committed:
+# `.env` is gitignored and the config path lives outside the repo entirely.
+ENV_FILES = [
+    Path(__file__).resolve().parents[2] / ".env",
+    Path.home() / ".config" / "atsc" / "env",
+]
+
+
+def _load_env_files() -> None:
+    """
+    Minimal dotenv reader — no dependency, no surprises.
+
+    Only fills variables that are not already set, so an explicitly exported
+    value always wins over a file. Values are not expanded or interpreted: a key
+    is an opaque string and shell-style expansion of one is a good way to
+    silently mangle it.
+    """
+    for path in ENV_FILES:
+        try:
+            if not path.is_file():
+                continue
+            for raw in path.read_text().splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, value = line.partition("=")
+                name = name.strip().removeprefix("export ").strip()
+                value = value.strip().strip('"').strip("'")
+                if name and value and name not in os.environ:
+                    os.environ[name] = value
+        except OSError:
+            continue
+
+
+def key_source() -> str | None:
+    """Where the key came from, for diagnostics. Never returns the key itself."""
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "environment"
+    for path in ENV_FILES:
+        try:
+            if path.is_file() and "OPENROUTER_API_KEY" in path.read_text():
+                return str(path)
+        except OSError:
+            continue
+    return None
+
+
 def _key() -> str:
     k = os.environ.get("OPENROUTER_API_KEY")
     if not k:
+        _load_env_files()
+        k = os.environ.get("OPENROUTER_API_KEY")
+    if not k:
         raise OpenRouterError(
-            "OPENROUTER_API_KEY is not set.\n"
-            "  export OPENROUTER_API_KEY=sk-or-...\n"
-            "Get one at https://openrouter.ai/keys — a single key covers the whole field."
+            "OPENROUTER_API_KEY is not set. Put it in one of:\n"
+            f"  {ENV_FILES[0]}          (per-repo; gitignored)\n"
+            f"  {ENV_FILES[1]}   (all repos; outside git entirely)\n"
+            "as a single line:  OPENROUTER_API_KEY=sk-or-v1-...\n"
+            "Or export it for one shell. For GitHub Actions use a repository secret.\n"
+            "Get a key at https://openrouter.ai/keys — one covers the whole field."
+        )
+    if k.startswith("sk-or-v1-REPLACE") or k == "sk-or-v1-...":
+        raise OpenRouterError(
+            f"OPENROUTER_API_KEY is still the placeholder from .env.example "
+            f"(source: {key_source()}). Replace it with your real key."
         )
     return k
 

@@ -329,6 +329,52 @@ def cmd_paste(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- poll
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Check the API key is wired up, without ever printing it."""
+    from .adapters import openrouter
+
+    print("API key")
+    src = openrouter.key_source()
+    if not src:
+        print("  NOT FOUND. Put it in one of:")
+        for p in openrouter.ENV_FILES:
+            print(f"    {p}")
+        print("  as:  OPENROUTER_API_KEY=sk-or-v1-...")
+        print("  Never paste a key into a chat window or commit it to the repo.")
+    else:
+        print(f"  found via: {src}")
+        try:
+            k = openrouter._key()
+            # Fingerprint only — enough to tell two keys apart, useless to a thief.
+            import hashlib
+            fp = hashlib.sha256(k.encode()).hexdigest()[:12]
+            print(f"  looks valid, sha256 fingerprint {fp} (the key itself is never printed)")
+        except openrouter.OpenRouterError as e:
+            print(f"  PROBLEM: {e}")
+            return 1
+
+    print("\nGit hygiene")
+    import subprocess
+    leaked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True,
+                            text=True).stdout.splitlines()
+    bad = [f for f in leaked if f in {".env"} or f.endswith((".key", ".pem"))]
+    print(f"  {'LEAK: ' + ', '.join(bad) if bad else 'no secret files are tracked by git'}")
+    ignored = subprocess.run(["git", "check-ignore", ".env"], cwd=ROOT,
+                             capture_output=True, text=True).returncode == 0
+    print(f"  .env is {'gitignored' if ignored else 'NOT IGNORED — fix .gitignore before creating it'}")
+
+    print("\nConnectivity")
+    try:
+        n = len(openrouter.list_models())
+        print(f"  reached OpenRouter, {n} models available to this key")
+    except Exception as e:
+        print(f"  cannot reach OpenRouter: {type(e).__name__}")
+        print(f"    {str(e)[:160]}")
+        print("  If this is a sandboxed session, that is expected — run poll from your"
+              " own machine or from GitHub Actions.")
+    return 0
+
+
 def cmd_models(args: argparse.Namespace) -> int:
     from .adapters import openrouter
 
@@ -651,6 +697,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--allow-unverified", action="store_true",
                    help="dry run against placeholder lines — never distribute the output")
     p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("doctor", help="check the API key and git hygiene (never prints the key)")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("paste", help="render the compact paste-into-a-chat-box prompt")
     common(p)

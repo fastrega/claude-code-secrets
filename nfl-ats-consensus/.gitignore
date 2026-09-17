@@ -8,3 +8,11 @@ data/dossiers/
 # audit trail committed to git — recommended once you are running for real.
 data/picks/
 data/results/
+
+# Secrets. Never commit a key — see README "Where the API key goes".
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
