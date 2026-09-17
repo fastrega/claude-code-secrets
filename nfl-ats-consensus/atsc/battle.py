@@ -38,6 +38,18 @@ def audit_lines(lock: dict, submissions: list[dict]) -> tuple[list[dict], str]:
     violations: list[dict] = []
 
     for s in submissions:
+        # A card with no picks must never pass quietly. It looks like a clean
+        # submission to every downstream count, so the model silently vanishes
+        # from the consensus while still appearing in the field list.
+        picks = s.get("picks")
+        if not picks:
+            violations.append({
+                "model": s.get("model"), "game_id": "*",
+                "used": None, "locked": None,
+                "action": "voided", "kind": "no_picks",
+            })
+            continue
+
         if s.get("lock_sha256") and s["lock_sha256"] != lock["lock"]["sha256"]:
             violations.append({
                 "model": s.get("model"), "game_id": "*",
